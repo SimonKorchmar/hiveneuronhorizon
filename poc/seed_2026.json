@@ -1,0 +1,69 @@
+{
+  "year": 2026,
+  "ecology": {
+    "global_temp_anomaly_c": 1.45,
+    "co2_ppm": 424,
+    "biomes": {
+      "amazon": "stressed, ~18% deforested",
+      "arctic": "summer sea ice shrinking, ice-free summers projected within a decade",
+      "coral_reefs": "major bleaching events ongoing",
+      "boreal_forest": "increased wildfire frequency"
+    },
+    "notable_events": [
+      "Record-breaking heatwaves across South Asia and Southern Europe in 2025",
+      "Atlantic hurricane season intensifying",
+      "Groundwater depletion acute in the US High Plains and northern India"
+    ]
+  },
+  "economy": {
+    "gdp_trends": "Modest global growth; inflation cooling from 2022-2024 peaks; AI capex boom concentrated in US/China",
+    "tech_level": "Frontier AI widely deployed in white-collar work; humanoid robotics in early pilot; fusion still pre-commercial; EV share of new car sales ~25% globally",
+    "labor": "White-collar displacement anxiety rising; creative and administrative roles contracting; skilled trades and care work tight",
+    "trade": "US-China decoupling in semiconductors and AI chips; friend-shoring to Mexico, Vietnam, India accelerating",
+    "energy_mix": "Renewables ~40% of new generation; coal slowly declining; natural gas sticky; nuclear revival in planning stages"
+  },
+  "geopolitics": {
+    "major_powers": ["USA", "China", "EU", "India", "Russia", "Japan", "UK", "Brazil"],
+    "active_conflicts": [
+      {"region": "Ukraine", "intensity": "hot, attritional, front largely frozen"},
+      {"region": "Gaza/Israel", "intensity": "ceasefire fragile, reconstruction contested"},
+      {"region": "Sudan", "intensity": "civil war, humanitarian catastrophe"},
+      {"region": "Taiwan Strait", "intensity": "cold, frequent grey-zone incidents"}
+    ],
+    "key_treaties": [
+      "Paris Agreement (underperforming)",
+      "AI safety summit declarations (non-binding)"
+    ],
+    "military_posture": "NATO rearming; China expanding navy; drone warfare now standard; AI targeting systems in field trials"
+  },
+  "society": {
+    "population": "World ~8.1 billion; fertility below replacement in most of East Asia, Europe, and parts of Latin America",
+    "health": "Post-COVID excess mortality receding; GLP-1 weight-loss drugs reshaping metabolic health in rich countries; antibiotic resistance worsening",
+    "migration": "Climate and conflict migration pressures at US southern border, Mediterranean, and within South/Southeast Asia",
+    "political_climate": "Populist backlash to immigration and elite institutions in many democracies; declining trust in media; generational divides over housing and AI"
+  },
+  "culture": {
+    "art_movements": [
+      "Post-AI craft revival (handmade, visibly human)",
+      "Cli-fi mainstream in literary fiction"
+    ],
+    "media": "TikTok-shaped short video dominates under-30 attention; legacy news consolidating; AI-generated content flooding feeds",
+    "values_shift": "Younger cohorts more pessimistic about institutions and the future; renewed interest in localism and trades",
+    "subcultures": [
+      "Solarpunk adjacent DIY energy communities",
+      "AI-skeptic analog scenes (film cameras, typewriters, acoustic)"
+    ]
+  },
+  "narrative_threads": [
+    {
+      "id": "thread-ai-labor",
+      "name": "The quiet unmaking of white-collar work",
+      "arc_so_far": "Throughout 2024-2026, firms began silently replacing junior analysts, paralegals, and copywriters with AI assistants. No mass layoffs announced; hiring simply stopped. A generation of new graduates faces a vanishing first rung."
+    },
+    {
+      "id": "thread-climate-migration",
+      "name": "The slow emptying of the tropics",
+      "arc_so_far": "Heat, water stress, and crop failure are making parts of the Sahel, Central America, and South Asia marginal. Migration northward and to cities accelerates but remains individually invisible — a family here, a village there."
+    }
+  ]
+}
