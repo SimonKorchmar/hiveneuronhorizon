@@ -1,15 +1,17 @@
-# Future Weavers — Phase 0 PoC (v4 scene-depth + dramatic-spine pipeline)
+# Future Weavers — Phase 0 PoC (v5 variance + long-arc + rupture pipeline)
 
 A CLI that generates one year of future history at a time, anchored to a
 named decade-scale dramatic question, populated by characters with wants
-and obstacles, staged in fewer-and-deeper scenes under an explicit
-scene-craft contract, audited for change / irreversibility / collision /
-in-scene ratio before it ships, and recorded each year in a one-row
-readability metric for diffable long-run audit.
+and obstacles, varied across setting / POV / time-scale / plot-shape,
+staged under an explicit scene-craft contract, allowed one typed
+surprise rupture when earned, audited for continuity and long-arc debt
+before it ships, and recorded each year in a one-row readability metric
+for diffable long-run audit.
 
 - Design history: `../concepts/v2_storytelling_pipeline.md` (v2, essay-shaped)
 - v3 plan:        `../concepts/plan.md` (character-driven baseline)
-- v4 plan:        `../concepts/v4_scene_depth_and_spine.md` (implemented here)
+- v4 plan:        `../concepts/v4_scene_depth_and_spine.md`
+- v5 plan:        `../concepts/v5_variance_long_arcs_and_surprise.md` (implemented here)
 
 ## Pipeline (per run + per year)
 
@@ -415,9 +417,10 @@ Every run produces its own folder:
 
 ```
 poc/runs/<timestamp>/
-  00_decade_spine.json                # NEW (v4): one-time dramatic spine
+  00_decade_spine.json                # one-time dramatic spine
                                       #           (question / wager /
                                       #           countdown / 3 acts /
+                                      #           promise_lines /
                                       #           stakes_for_cast)
   cast.json                           # persistent cast register
   side_cast.json                      # NEW (v4): persistent side-cast
@@ -437,6 +440,11 @@ poc/runs/<timestamp>/
                                       #   irreversible_events_observed,
                                       #   year_dilemma
   slop_ledger.json                    # phrases in cooldown, seeded at startup
+  setting_ledger.json                 # NEW (v5): place / POV /
+                                      #   time-scale / plot-shape cooldowns
+  debt_ledger.json                    # NEW (v5): all planted hooks as
+                                      #   near/mid/long/decade obligations
+  rupture_log.json                    # NEW (v5): quiet and ruptured years
   characters/
     char_<id>_arc.md                  # one per named character; appended each epoch
   year_2026_seed.json
@@ -460,8 +468,11 @@ poc/runs/<timestamp>/
                                       # v4: per-scene `contract`
                                       # (desire/obstacle/turn/cost/
                                       # gesture/subtext), `opening_image`
-                                      # (no `line`), voice_palette
-    06_story_draft.md                 # narrator execute draft
+                                      # (no `line`), voice_palette;
+                                      # v5: place/time/plot variance axes
+    06e_rupture.json                  # NEW (v5): typed rupture or quiet
+    06f_story_draft.md                # narrator execute draft
+    06_story_draft.md                 # legacy mirror of 06f draft
     07_story_final.md                 # editor's polish (may be rewritten
                                       # once more if continuity pass fails)
     07b_continuity_report.json        # hooks / palette / cast /
@@ -470,18 +481,23 @@ poc/runs/<timestamp>/
                                       # failed; v4 adds change_audit,
                                       # irreversibility, collision,
                                       # mode_fidelity.in_scene_ratio, and
-                                      # typed-hooks fidelity blocks
+                                      # typed-hooks fidelity blocks;
+                                      # v5 adds setting/debt/promise/
+                                      # rupture/fork-on-site audit fields
     08_forks.json                     # v4: forks typed as irreversible
                                       # events with fork_type / actor /
                                       # named_stake / clock /
-                                      # spine_advances / spine_wager_impact
+                                      # spine_advances / spine_wager_impact;
+                                      # v5 adds debt_role
     09_readability.json               # one-row audit record —
                                       # v4: mode_used, dramatic_seeds_planted,
                                       # changed_mains,
                                       # irreversible_events_declared
                                       # /_observed, collision_required
-                                      # /_satisfied, in_scene_ratio, plus
-                                      # pre-v4 fields
+                                      # /_satisfied, in_scene_ratio;
+                                      # v5 adds time_shape_used,
+                                      # plot_shape_used, long_debts_planted,
+                                      # debts_discharged, rupture_type
   year_2028/
     ...
 ```

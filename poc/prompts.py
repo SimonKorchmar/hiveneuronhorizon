@@ -1,4 +1,4 @@
-"""Prompt templates for the Future Weavers v4 scene-depth + spine pipeline.
+"""Prompt templates for the Future Weavers v5 variance + long-arc pipeline.
 
 v4 upgrades v3's character-driven pipeline in three places (see
 ../concepts/v4_scene_depth_and_spine.md):
@@ -21,7 +21,7 @@ v4 upgrades v3's character-driven pipeline in three places (see
       / body) and flags mains unchanged 3 years running. Forks must be
       irreversible EVENTS (not trends), typed, with a spine_wager_impact.
 
-The pipeline still looks like:
+The v5 pipeline extends this with setting/debt/rupture ledgers:
 
     1. specialists (5x parallel)     - rich per-domain JSON
     2. state merger                  - code, not a prompt
@@ -43,7 +43,8 @@ The pipeline still looks like:
                                        drops `line`, renames `anchor`
                                        to `opening_image`, expanded
                                        voice-palette candidates
-    6b. narrator execute             - v4: writes FEW LONG scenes,
+    6e. rupture authorisation        - v5: optional typed disruption
+    6f. narrator execute             - v4/v5: writes FEW LONG scenes,
                                        discovers inside the contract
                                        rather than paraphrasing a thesis
     7. editor                        - polish; v4: preserves contract +
@@ -227,7 +228,7 @@ Return your rich JSON document for the {facet_name} facet now.
 
 
 # --------------------------------------------------------------------------- #
-# 0. Decade Spine (v4 — run once at seed time)
+# 0. Decade Spine (v5 — run once at seed time)
 # --------------------------------------------------------------------------- #
 # A named dramatic question + wager + three acts. The spine is injected
 # into every downstream per-year stage so forks, dilemmas, outlines, and
@@ -255,7 +256,13 @@ Return STRICT JSON:
       "act": 1,
       "name": "a 2-4 word act title",
       "promise": "1 sentence: what this act's chapters must establish — the world, the stakes, the actors — without giving the answer",
-      "year_range": "YYYY-YYYY (which generated years roughly fall here; acts 1/2/3 should span the full run)"
+      "year_range": "YYYY-YYYY (which generated years roughly fall here; acts 1/2/3 should span the full run)",
+      "promise_lines": [
+        {
+          "id": "act-1-short-kebab-id",
+          "obligation": "1 sentence: a STAGEABLE on-page obligation this act owes the reader, e.g. 'Stage a named worker losing a job to an AI system on-page.'"
+        }
+      ]
     },
     {
       "act": 2,
@@ -293,10 +300,13 @@ HARD RULES:
 4. ACTS cover the full 10-year span. If the run is seed year S, acts
    land approximately at [S+1..S+3], [S+4..S+7], [S+8..S+10]. Use the
    exact years.
-5. STAKES_FOR_CAST must name at least 2 of the 3 bootstrap characters
+5. Every act must include 3-6 `promise_lines`. Each line must be
+   stageable on-page: a place, person, loss, decision, or confrontation
+   the later beat sheet can claim and the continuity pass can audit.
+6. STAKES_FOR_CAST must name at least 2 of the 3 bootstrap characters
    by id and describe what THEY stand to lose. A decade where the
    founding cast has no skin in the question is a lecture.
-6. DECADE_PROHIBITED is a list of endings this run is NOT allowed to
+7. DECADE_PROHIBITED is a list of endings this run is NOT allowed to
    reach. Use it to block the mean of "10 years of speculative
    fiction": a single-technology rescue, a god-from-the-machine
    federal solution, the extinction of the cast, the year everyone
@@ -438,6 +448,9 @@ plug into this, not compete with it):
 {decade_spine_json}
 ---
 
+RECENT YEAR-DILEMMA WAGERS TO AVOID REPEATING (v5 anti-repetition memory):
+{recent_tensions}
+
 SPECIALIST DOCUMENTS (one per facet, JSON):
 
 --- ECOLOGY ---
@@ -462,7 +475,8 @@ MERGED WORLD STATE (JSON):
 
 Produce the balanced summary JSON now. Remember: year_mood + year_dilemma
 (with both stakes_a AND stakes_b that cost something) + central_tension
-are all required. The chapter is built on year_dilemma.
+are all required. The chapter is built on year_dilemma. Do not restate
+a recent wager with new nouns; move the dramatic question forward.
 """
 
 
@@ -843,6 +857,8 @@ Return STRICT JSON:
 
   "dilemma_pov_character_id": "the character whose choice carries the year_dilemma this year. Must be a main_cast id. Usually the dilemma's actor.",
 
+  "act_promise_claim": "one promise_lines[].id from the current decade-spine act that this chapter will dramatise on-page",
+
   "hooks_to_resolve": [
     {
       "hook": "previous chapter's hook, close paraphrase of its text",
@@ -857,6 +873,9 @@ Return STRICT JSON:
       "type": "dramatic-seed" | "world-seed" | "admin-carry-over",
       "subtype": "short label (e.g. 'unresolved-choice', 'pending-audit', 'threatened-return', 'seeded-relationship')",
       "ripens_by_year": <int>,
+      "horizon_class": "near" | "mid" | "long" | "decade",
+      "spine_act": 1 | 2 | 3,
+      "spine_promise_claim": "promise_lines[].id this hook serves, usually same as act_promise_claim",
       "stake": "1 clause: the named human thing at risk if this hook is not picked up"
     }
   ],
@@ -881,7 +900,8 @@ Return STRICT JSON:
       "summary": "1 sentence: what happens in this beat",
       "scale": "world" | "scene",
       "purpose": "why this beat exists in the chapter (hook, escalation, callback, payoff, quiet, turn)",
-      "carries_irreversible_event_id": "one of the event_ids from `irreversible_events`, or null"
+      "carries_irreversible_event_id": "one of the event_ids from `irreversible_events`, or null",
+      "fork_staged_on_site": true | false
     }
   ],
 
@@ -912,31 +932,45 @@ HARD RULES:
    MUST have between 5 and 9 entries.
 3. `interaction_id` values (when not 'context' or 'character') must
    match ids in the cross-interference JSON.
-4. `hooks_to_plant` must have >=2 entries, AT LEAST ONE with type ==
+4. `act_promise_claim` must name one current-act promise line from the
+   DECADE SPINE. This is a binding staging obligation, not theme.
+5. `hooks_to_plant` must have >=2 entries, AT LEAST ONE with type ==
    'dramatic-seed'. `admin-carry-over` hooks alone are not sufficient
    — the chapter must seed future drama.
-5. `hooks_to_resolve` must pick up >=2 entries from the previous
+   v5 adds: AT LEAST ONE hook must have horizon_class "long" or
+   "decade" and ripen at least 5 years out. Every hook must include
+   horizon_class, spine_act, and spine_promise_claim.
+6. `hooks_to_resolve` must pick up >=2 entries from the previous
    chapter's hooks if any exist, prioritising the previous chapter's
    dramatic-seed entries first.
-6. `irreversible_events` must have AT LEAST ONE entry. If `on_page`
+7. If there is a standing mid/long/decade debt in the ledger, you must
+   discharge or escalate at least one in `hooks_to_resolve`; escalation
+   must cost a named character something on-page.
+8. `irreversible_events` must have AT LEAST ONE entry, and at least one
+   event type must be fresh against RECENT IRREVERSIBLE EVENT TYPES.
+   If `on_page`
    is false, `on_page_consequence` must describe how THIS chapter
    stages its aftermath; a truly invisible event does not count.
-7. `collision_plan.required` MUST be true when main_cast.length >= 3.
+9. If CHOSEN FORK.actor is not `dilemma_pov_character_id`, at least one
+   ordered beat must set `fork_staged_on_site: true` and put the POV or
+   a witness at the physical location where the fork's irreversible act
+   happens. A phone call about the act is not enough.
+10. `collision_plan.required` MUST be true when main_cast.length >= 3.
    When required, the description must name the collision scene —
    a scene in which at least two main characters EXERCISE AGENCY
    toward opposing or conflicting ends (a conversation, a refusal,
    a signed document, a refusal to sign, a fight, a choice made in
    front of witnesses). Co-presence is not collision.
-8. `dilemma_pov_character_id` must be a main_cast id. That character's
+11. `dilemma_pov_character_id` must be a main_cast id. That character's
    choice carries the chapter; the outline and narrator will build
    accordingly.
-9. `off_page_event` is OPTIONAL. It is NOT the same as an off-page
+12. `off_page_event` is OPTIONAL. It is NOT the same as an off-page
    irreversible event: you may have irreversible_events with
    on_page: false AND off_page_event: null. Use off_page_event when
    a SINGLE dramatic event genuinely fits this year and putting it
    off-page will amplify the chapter. The user message may nudge
    against this if the last two consecutive years already used it.
-10. The beat that carries an irreversible event (when on_page) should
+13. The beat that carries an irreversible event (when on_page) should
     mark `carries_irreversible_event_id`. The narrator will be told
     to RATIFY that event on-page — not merely reference it.
 
@@ -982,6 +1016,32 @@ PREVIOUS CHAPTER'S TYPED HOOKS (hooks_to_plant entries from last year;
 prioritise picking up the dramatic-seed entries first):
 ---
 {previous_hooks_typed}
+---
+
+OPEN DEBT LEDGER (v5 long arcs; discharge/escalate at least one standing
+mid/long/decade debt when available, and plant one new long/decade debt):
+---
+{debt_ledger_json}
+---
+
+STANDING MID/LONG/DECADE DEBTS TO PREFER:
+---
+{long_debt_guidance}
+---
+
+CURRENT OPEN DEBT NEAR-HORIZON FRACTION (must not drift above 0.60):
+{near_debt_fraction}
+
+CURRENT ACT PROMISE LINE IDS YOU MAY CLAIM:
+{act_promise_options}
+
+RECENT IRREVERSIBLE EVENT TYPES (last 2 years; choose at least one type
+not on this list):
+{recent_irreversible_event_types}
+
+CHOSEN FORK FOR THIS YEAR (if actor differs from your POV, stage it on-site):
+---
+{chosen_fork_json}
 ---
 
 RECENT OFF-PAGE USE (for the off_page_event decision):
@@ -1042,6 +1102,14 @@ Return STRICT JSON with this exact shape:
   "mode": "monoscene" | "diptych" | "triptych" | "long-march" | "overheard" | "mosaic",
   "mode_rationale": "1 sentence: why this mode for this year_dilemma (reference cast composition, the POV character, the year_mood, and the irreversible events in the beat sheet)",
 
+  "place_signature": "short stable id for the primary concrete location, e.g. 'ana-office:el-paso-liaison' or 'well-station:valve-12'",
+  "place_family": "coarse setting family, e.g. 'office-bureaucratic-interior', 'water-infrastructure-site', 'domestic-kitchen', 'street-transit'",
+  "pov_gravity_well_id": "character id whose choices structure the chapter, even if other POVs appear",
+  "time_scale": "single-hour-real-time" | "single-day" | "weeks-compressed" | "season" | "multi-year-flashforward" | "letter-from-future" | "historical-zoom" | "dream-or-rumour",
+  "plot_shape": "decision-under-pressure" | "pursuit" | "arrival" | "departure" | "failure-and-its-aftermath" | "discovery" | "ambush" | "confession" | "negotiation" | "reckoning",
+  "act_promise_claimed": "echo beat_sheet.act_promise_claim",
+  "variance_override": null | {"axes": ["place_family"], "justification": "1 sentence why repetition is dramatically necessary this year"},
+
   "word_budget": {"low": <int>, "high": <int>},
 
   "scene_budget": [
@@ -1096,41 +1164,49 @@ HARD RULES (the pipeline WILL reject violations):
 4. `mode == "mosaic"` is CAPPED at 1 in every 4 years. The user message
    tells you if the cap is saturated; if so, pick a different mode.
 5. `year_mood` MUST EQUAL the summariser's year_mood.
-6. `word_budget` must sit INSIDE THE INTERSECTION of:
+6. v5 variance fields are REQUIRED: place_signature, place_family,
+   pov_gravity_well_id, time_scale, plot_shape, act_promise_claimed.
+   They must respect SETTING COOLDOWNS unless you include
+   variance_override. An override is rare and must justify the repeated
+   axes in dramatic terms.
+7. time_scale and plot_shape must be chosen verbatim from the allowed
+   values in the user message. Use time_scale as a real execution tool,
+   not decoration.
+8. `word_budget` must sit INSIDE THE INTERSECTION of:
      - the mode's chapter_word range (given in the user message), AND
      - the year_mood's range (also given in the user message).
    Pick a sub-range inside the intersection.
-7. `scene_budget` length must be in [mode.min_scenes, mode.max_scenes]
+9. `scene_budget` length must be in [mode.min_scenes, mode.max_scenes]
    (given in the user message). Every scene must have ALL required
    fields INCLUDING the full `contract` object. Per-scene `target_words`
    must sit in the mode's scene_word range.
-8. Every scene's `contract.desire` is a WANT IN THIS MOMENT — not the
+10. Every scene's `contract.desire` is a WANT IN THIS MOMENT — not the
    chapter's thesis. If two scenes' desires are identical, they are the
    same scene. `turn` must be a SHIFT — the floor changes. `cost` must
    cost a NAMED thing, even if the payment is deferred. `embodied_gesture`
    must be a SPECIFIC physical action, not 'he thought about it'.
-9. `pov_character_id` must be an id present in `who` for that scene,
+11. `pov_character_id` must be an id present in `who` for that scene,
    OR null only when the mode is `long-cam` (place-as-protagonist).
-10. `scene_ids` in `section_plan` must all exist in `scene_budget`.
+12. `scene_ids` in `section_plan` must all exist in `scene_budget`.
     `beat_ids` must all exist in the beat sheet's `ordered_beats`.
     Every beat must appear in at least one section's `beat_ids`; every
     scene must appear in at least one section's `scene_ids`.
-11. `section_plan` must have at least 2 sections, at most 7, EXCEPT
+13. `section_plan` must have at least 2 sections, at most 7, EXCEPT
     when mode == 'monoscene' or mode == 'long-march', in which case
     section_plan may have exactly 1 section.
-12. `opening_line_seed` must not be a retrospective-historian opener
+14. `opening_line_seed` must not be a retrospective-historian opener
     (no "In <YEAR>," / "By year's end," / "The year <YEAR> was...")
     and must not echo any active slop-ledger phrase.
-13. `voice_palette.base` / `.modulator` / `.device` MUST each be one
+15. `voice_palette.base` / `.modulator` / `.device` MUST each be one
     of the respective candidate id lists, verbatim.
-14. `voice_palette.justification` must reference the year_dilemma
+16. `voice_palette.justification` must reference the year_dilemma
     (its actor, its clock, or its wager) — not just 'the mood'.
-15. At least ONE scene in `scene_budget` must carry an irreversible
+17. At least ONE scene in `scene_budget` must carry an irreversible
     event from the beat sheet (either the beat marked with
     `carries_irreversible_event_id`, or, for off-page events, the
     scene staging the on_page_consequence). The narrator needs a
     place to RATIFY the irreversible.
-16. If the beat sheet's `collision_plan.required` is true, at least
+18. If the beat sheet's `collision_plan.required` is true, at least
     one scene must have `who` of length >= 2 AND name both its POV
     and a non-POV character who exercises agency (the contract's
     `obstacle` or `turn` must name the other character).
@@ -1239,6 +1315,23 @@ location stagings, vary the where):
 {recent_stagings}
 ---
 
+SETTING LEDGER (v5 chapter-level variance history):
+---
+{setting_ledger_json}
+---
+
+SETTING COOLDOWN CONTEXT (values currently in cooldown; avoid them unless
+you supply variance_override):
+---
+{setting_cooldown_context_json}
+---
+
+VALID time_scale VALUES:
+{valid_time_scales}
+
+VALID plot_shape VALUES:
+{valid_plot_shapes}
+
 ACTIVE SLOP-LEDGER PHRASES (do not echo these in opening_line_seed or
 in any contract field):
 {active_slop_list}
@@ -1277,6 +1370,8 @@ INPUTS
 - The VOICE PALETTE CARD.
 - The BEAT SHEET: ordered beats, typed hooks, typed irreversible_events,
   collision_plan, off_page_event.
+- The RUPTURE AUTHORISATION: either null (a quiet year) or a typed,
+  binding disruption the outline did not plan around.
 - The CHARACTER DOSSIERS.
 - Previous chapter, for continuity.
 - The Asimov-flavoured STYLE GUIDE (texture only).
@@ -1298,6 +1393,19 @@ HOW TO EXECUTE
     be in direct or reported speech. No narrator summary paragraphs.
   * `mosaic`: short numbered/dated dispatches. Use headers. This is
     the v3 fragment-dossier energy; it is rarely allowed.
+
+- EXECUTE THE V5 TIME_SCALE. If the outline says season, compress 3-6
+  months but include at least one witnessed dated micro-scene. If
+  multi-year-flashforward, mark the future break clearly. If
+  letter-from-future, the letter must be received or destroyed
+  in-narrative. If historical-zoom, keep the zoom under one quarter of
+  the chapter. If dream-or-rumour, return to reality and show the cost.
+
+- EXECUTE THE RUPTURE IF AUTHORISED. A non-null rupture is binding. It
+  should feel like a smaller second plan crossing the outline: a reveal,
+  side-character takeover, time jump, reversal, loss, omen, or genre
+  tilt. Do not explain the mechanism; put the `audit_signal` on-page.
+  If rupture is null, do not manufacture one.
 
 - DRIVE EACH SCENE BY ITS CONTRACT, NOT A THESIS. For every scene in
   `scene_budget`, the POV character WANTS `desire`. The OBSTACLE is
@@ -1414,6 +1522,12 @@ BEAT SHEET (JSON — typed hooks, typed irreversible_events, collision_plan):
 {beat_sheet_json}
 ---
 
+RUPTURE AUTHORISATION (JSON — null means this is a quiet year; non-null
+is binding and must satisfy audit_signal):
+---
+{rupture_json}
+---
+
 CHARACTER DOSSIERS (JSON array — reach for `body_detail` at least once
 for the POV):
 ---
@@ -1454,6 +1568,90 @@ slop-ledger phrase.
 
 
 # --------------------------------------------------------------------------- #
+# 6e. Rupture Authorisation (v5: typed, optional, cooldown-gated)
+# --------------------------------------------------------------------------- #
+
+RUPTURE_AUTH_SYSTEM = """\
+You are the Rupture Authoriser for Future Weavers v5. You do NOT write
+prose. You decide whether this chapter gets one controlled surprise that
+the outline did not plan around.
+
+The rupture is optional. Quiet years are valuable. If you authorise a
+rupture, it must be typed, state-bound, and auditable. It cannot invent
+an arbitrary disaster. It must cross the outline at one specific beat
+and impose a cost.
+
+Return STRICT JSON:
+
+{
+  "year": <int>,
+  "rupture": null | {
+    "type": "withheld-information-revealed" | "side-character-takeover" | "off-stage-rupture-on-stage" | "expected-outcome-reversed" | "time-jump-mid-chapter" | "unscheduled-character-loss" | "rumour-or-omen" | "genre-tilt",
+    "actor_id": "existing character id, side-cast id, or named force from state",
+    "displaces_pov_in_beat": "beat_id from the beat sheet, or null",
+    "reason": "1-2 sentences explaining why this rupture is earned by prior state/debt/side-cast history",
+    "expected_effect": "1 sentence: what this changes in the reader's understanding or a main's action",
+    "audit_signal": "concrete signal the continuity pass can verify on-page"
+  }
+}
+
+TYPE RULES:
+- withheld-information-revealed: reveal must be consistent with prior chapters and change a main's action in-scene.
+- side-character-takeover: actor must come from side_cast and should have prior appearances.
+- off-stage-rupture-on-stage: event must already exist in state/debts; this stages intrusion, not invention.
+- expected-outcome-reversed: reverses an expected beat and pays cost on-page.
+- time-jump-mid-chapter: the jump is visibly marked by date or witnessed gap.
+- unscheduled-character-loss: loss must affect future standing.
+- rumour-or-omen: plants a decade-class debt.
+- genre-tilt: <=250 words and sits between beats; it cannot replace a promised beat.
+
+Output JSON only. No markdown fences. No commentary.
+"""
+
+
+RUPTURE_AUTH_USER_TEMPLATE = """\
+YEAR: {year}
+
+VALID RUPTURE TYPES:
+{valid_rupture_types}
+
+RUPTURE PACING CONSTRAINTS:
+---
+{rupture_constraints_json}
+---
+
+CHAPTER OUTLINE (JSON):
+---
+{chapter_outline_json}
+---
+
+BEAT SHEET (JSON):
+---
+{beat_sheet_json}
+---
+
+OPEN DEBT LEDGER:
+---
+{debt_ledger_json}
+---
+
+SIDE CAST REGISTER:
+---
+{side_cast_json}
+---
+
+PRIOR RUPTURE LOG:
+---
+{rupture_log_json}
+---
+
+Authorise at most one rupture for year {year}, or return "rupture": null
+if this should be a quiet year. Respect force_rupture / must_be_quiet in
+the pacing constraints.
+"""
+
+
+# --------------------------------------------------------------------------- #
 # 7. Editor
 # --------------------------------------------------------------------------- #
 
@@ -1482,6 +1680,10 @@ resolve unresolved_subtext that was meant to lie under the scene.
 The voice palette (base + modulator + device) is committed. The DEVICE
 is a hard constraint. If the device is violated, fix the draft; don't
 loosen the constraint.
+
+If a v5 RUPTURE AUTHORISATION is supplied, preserve it. Do not smooth it
+back into the outline, explain it away, or cut the audit_signal. Quiet
+years stay quiet; authorised ruptures stay disruptive.
 
 HONOUR THE SLOP LEDGER
 
@@ -1541,6 +1743,17 @@ voice_palette, and word_budget — do not smooth it into a single
 historian essay):
 ---
 {chapter_outline_json}
+---
+
+BEAT SHEET (JSON; preserve irreversible events, long debts, and act
+promise claim):
+---
+{beat_sheet_json}
+---
+
+RUPTURE AUTHORISATION (JSON; null means quiet, non-null is binding):
+---
+{rupture_json}
 ---
 
 DRAFT (from the Narrator):
@@ -1618,6 +1831,34 @@ Return STRICT JSON with this exact shape:
     "mode_notes": "1 sentence if not satisfied — what the draft does instead (e.g. 'wrote four short scenes where a monoscene was called for')"
   },
 
+  "setting_ledger_realised": {
+    "place_signature": "actual primary place signature realised by the prose",
+    "place_family": "actual primary place family",
+    "pov_gravity_well_id": "actual character whose choices structure the chapter",
+    "time_scale": "actual time_scale used",
+    "plot_shape": "actual plot_shape used",
+    "irreversible_event_types": ["types actually observed"]
+  },
+
+  "setting_ledger_compliance": {
+    "place_signature": true | false,
+    "place_family": true | false,
+    "pov_gravity_well_id": true | false,
+    "time_scale": true | false,
+    "plot_shape": true | false,
+    "irreversible_event_types": true | false
+  },
+
+  "fork_staged_on_site": true | false,
+  "act_promise_claimed": "promise line id claimed by beat/outline",
+  "act_promise_realised": true | false,
+  "debt_ledger_long_planted": <int>,
+  "debt_ledger_discharged": [
+    {"hook_id": "id", "old_status": "open", "new_status": "advanced" | "resolved" | "reversed" | "abandoned", "evidence": "1 sentence"}
+  ],
+  "rupture_realised": true | false | "n/a",
+  "irreversible_event_diversity": true | false,
+
   "scene_contracts": [
     {
       "scene_id": "from the outline",
@@ -1694,9 +1935,15 @@ HARD RULES FOR THE AUDIT:
 11. `off_page_honored`: if off_page_event in the beat sheet is
     non-null and the chapter STAGES the event directly instead of
     referencing it, false → FAIL. If null, "n/a".
-12. `verdict` is FAIL if ANY of rules 1-11 fails OR if `issues`
+12. v5 checks: fork_staged_on_site must be true when the chosen fork's
+    actor differs from the outline's pov_gravity_well_id; act_promise
+    must be realised on-page; debt_ledger_long_planted must be >=1;
+    authorised rupture must be realised; irreversible_event_diversity
+    must be true; setting cooldown violations without variance_override
+    are failures.
+13. `verdict` is FAIL if ANY of rules 1-12 fails OR if `issues`
     contains a substantive continuity error. Otherwise PASS.
-13. `fix_notes` MUST be present if verdict == fail. Keep it concrete,
+14. `fix_notes` MUST be present if verdict == fail. Keep it concrete,
     actionable, under ~200 words. The editor has ONE chance to fix.
 
 Output JSON only. No markdown fences. No commentary.
@@ -1716,6 +1963,26 @@ BEAT SHEET (JSON — ordered beats, typed hooks, typed irreversible_events,
 collision_plan, off_page_event):
 ---
 {beat_sheet_json}
+---
+
+RUPTURE AUTHORISATION (JSON — null means quiet; non-null must be audited):
+---
+{rupture_json}
+---
+
+SETTING LEDGER BEFORE THIS YEAR (JSON):
+---
+{setting_ledger_json}
+---
+
+DEBT LEDGER BEFORE THIS YEAR (JSON):
+---
+{debt_ledger_json}
+---
+
+CHOSEN FORK FOR THIS YEAR (JSON; use actor to judge fork_staged_on_site):
+---
+{chosen_fork_json}
 ---
 
 CAST PLAN (JSON — the characters the prose promised to cover, with
@@ -1794,6 +2061,8 @@ Hard requirements:
 6. ANTI-LOCK-IN: the user message lists the chosen-fork domains of
    the LAST 2 YEARS. AT LEAST ONE of your three forks MUST be in a
    domain NOT on that list.
+   v5 also lists recent irreversible event types; at least one fork
+   should imply an event type outside that recent set.
 7. FORK TYPE: each fork must declare a `fork_type`, one of:
      - "event"                — a discrete act (a ruling, a strike,
                                  an explosion, a signing).
@@ -1836,6 +2105,8 @@ Return STRICT JSON:
         "how": "1 sentence: what this fork does to the decade's act structure"
       },
       "spine_wager_impact": "toward-yes" | "toward-no" | "sideways",
+      "debt_role": "ripens-existing" | "plants-new-horizon" | "fresh-domain",
+      "debt_hook_id": "existing hook_id if debt_role == ripens-existing, else null",
       "flavor": "2-3 sentences setting up the concrete seed for the specialists to run with"
     },
     {...},
@@ -1845,6 +2116,12 @@ Return STRICT JSON:
 
 Distribute `drasticness` across the three: one should be "high" or
 "extreme"; not all three the same.
+
+V5 debt requirements: if the open debt ledger contains debts, one fork
+must ripen an existing mid/long/decade debt (`debt_role` =
+"ripens-existing"). One fork must plant a new long-horizon obligation
+(`debt_role` = "plants-new-horizon"). One fork may satisfy fresh domain
+pressure (`debt_role` = "fresh-domain").
 
 Output JSON only. No markdown fences.
 """
@@ -1882,6 +2159,17 @@ THIS YEAR'S FINAL STORY:
 CHOSEN-FORK DOMAINS IN RECENT YEARS (anti-lock-in — at least ONE of your
 three forks must use a domain NOT on this list):
 {recent_fork_domains}
+
+OPEN DEBT LEDGER (v5):
+---
+{debt_ledger_json}
+---
+
+CURRENT OPEN DEBT NEAR-HORIZON FRACTION:
+{near_debt_fraction}
+
+RECENT IRREVERSIBLE EVENT TYPES (avoid making all forks repeat these):
+{recent_irreversible_event_types}
 
 Propose 3 drastic forks from 3 DIFFERENT domains for year {next_year}
 now. Each a named, dated IRREVERSIBLE EVENT with an actor and a

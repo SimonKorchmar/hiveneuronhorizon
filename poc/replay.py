@@ -25,6 +25,9 @@ Examples:
     # Rewrite the editor + re-audit + re-propose forks + refresh readability
     python replay.py 20260419-192449 --from-stage 07
 
+    # Re-run rupture + narrator + downstream, keeping the outline fixed
+    python replay.py 20260419-192449 --from-stage 06e
+
     # Re-audit only (keep the existing editor output); read new continuity
     # report + refreshed readability. Skips the editor LLM call entirely.
     python replay.py 20260419-192449 --from-stage 07b
@@ -44,7 +47,8 @@ Stage ids (in order):
     06b character dossiers
     06c beat sheet
     06d chapter outline (narrator pass 1)
-    06  narrator execute (writes 06_story_draft.md)
+    06e rupture authorisation
+    06f narrator execute (writes 06f_story_draft.md)
     07  editor (writes 07_story_final.md)
     07b continuity pass
     08  fork proposer
@@ -319,7 +323,7 @@ async def _replay(args: argparse.Namespace) -> None:
     # Print final prose only if we actually re-ran the narrator / editor
     # / continuity (otherwise the user just ran forks or readability;
     # the prose on disk is unchanged and printing it adds noise).
-    if poc._should_run("06", args.from_stage):  # noqa: SLF001
+    if poc._should_run("06f", args.from_stage):  # noqa: SLF001
         print()
         print(epoch["story"])
 

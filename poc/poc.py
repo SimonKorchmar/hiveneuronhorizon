@@ -1,4 +1,4 @@
-"""Future Weavers — v4 scene-depth + dramatic-spine pipeline.
+"""Future Weavers — v5 variance + long-arc + rupture pipeline.
 
 v4 keeps the v3 scaffolding (specialists, summariser, cross-interference,
 cast/dossier/beats, continuity pass, fork proposer, replay CLI) intact.
@@ -273,15 +273,70 @@ YEAR_DILEMMA_REQUIRED_FIELDS: tuple[str, ...] = (
     "clock", "wager",
 )
 
-# Decade spine (v4 plan §3.1). Written once, at run start, after the cast
-# bootstrap. It names the 10-year dramatic question, the countdown, the
-# three-act structure, and the wager. Injected into every per-year stage.
+# Decade spine (v4 plan §3.1; v5 adds promise_lines). Written once, at run
+# start, after the cast bootstrap. It names the 10-year dramatic question, the
+# countdown, the three-act structure, and the wager. Injected into every
+# per-year stage.
 DECADE_SPINE_REQUIRED_FIELDS: tuple[str, ...] = (
     "question", "wager", "countdown", "acts",
 )
 DECADE_SPINE_ACT_FIELDS: tuple[str, ...] = (
     "act", "name", "promise", "year_range",
 )
+
+# ------ v5 tuning ---------------------------------------------------------- #
+# v5 plan: variance budget, long-arc debt ledger, and typed rupture slot.
+
+VALID_TIME_SCALES: tuple[str, ...] = (
+    "single-hour-real-time",
+    "single-day",
+    "weeks-compressed",
+    "season",
+    "multi-year-flashforward",
+    "letter-from-future",
+    "historical-zoom",
+    "dream-or-rumour",
+)
+
+VALID_PLOT_SHAPES: tuple[str, ...] = (
+    "decision-under-pressure",
+    "pursuit",
+    "arrival",
+    "departure",
+    "failure-and-its-aftermath",
+    "discovery",
+    "ambush",
+    "confession",
+    "negotiation",
+    "reckoning",
+)
+
+SETTING_COOLDOWNS: dict[str, int] = {
+    "place_signature": 3,
+    "place_family": 2,
+    "pov_gravity_well_id": 2,
+    "time_scale": 2,
+    "plot_shape": 2,
+    "irreversible_event_types": 2,
+}
+VARIANCE_OVERRIDE_WINDOW = 4
+
+VALID_HORIZON_CLASSES: tuple[str, ...] = ("near", "mid", "long", "decade")
+LONG_HORIZON_CLASSES: tuple[str, ...] = ("long", "decade")
+DEBT_NEAR_MAX_FRACTION = 0.60
+
+VALID_RUPTURE_TYPES: tuple[str, ...] = (
+    "withheld-information-revealed",
+    "side-character-takeover",
+    "off-stage-rupture-on-stage",
+    "expected-outcome-reversed",
+    "time-jump-mid-chapter",
+    "unscheduled-character-loss",
+    "rumour-or-omen",
+    "genre-tilt",
+)
+RUPTURE_FORCED_AFTER_QUIET_YEARS = 4
+RUPTURE_CONSECUTIVE_CAP = 3
 
 # ------ Phase 5 tuning ----------------------------------------------------- #
 # Ordered pipeline stages per year. The ids mirror the numeric prefixes used
@@ -300,7 +355,8 @@ STAGE_ORDER: tuple[str, ...] = (
     "06b",   # character dossiers
     "06c",   # beat sheet (v4: typed hooks + irreversible events)
     "06d",   # chapter outline (v4: mode + scene contract)
-    "06",    # narrator execute (writes 06_story_draft.md)
+    "06e",   # rupture authorisation (v5: cheap, optional, typed)
+    "06f",   # narrator execute (writes 06f_story_draft.md)
     "07",    # editor (writes 07_story_final.md)
     "07b",   # continuity pass (v4: change_delta, in-scene ratio,
              # collision, irreversibility). May retry the editor once
@@ -778,27 +834,40 @@ def _unchanged_streaks(index: dict, *, current_year: int,
     A character breaks its streak the first year it is either
     `changed` OR absent from the main_cast (absence is treated as a
     natural reset — a dormanted character is not "unchanged on-page",
-    it is "elsewhere").
+    it is "elsewhere"). The old implementation iterated the year's
+    cast_ids only, so an absent year became a no-op rather than a
+    reset — a character who was unchanged in 2028, absent in 2029,
+    then unchanged in 2030 would (wrongly) accumulate a streak of 2
+    and trip the 3-year flag the next time they reappeared. Iterate
+    per-character instead so absence short-circuits the run.
     """
-    chapters = sorted(index.get("chapters", []),
-                      key=lambda c: c.get("year", 0), reverse=True)
-    per_char_streak: dict[str, int] = {}
-    per_char_broken: dict[str, bool] = {}
+    chapters = sorted(
+        (c for c in index.get("chapters", [])
+         if isinstance(c.get("year"), int) and c["year"] < current_year),
+        key=lambda c: c["year"], reverse=True,
+    )
+    # Every id we've ever seen in a cast_ids list is a candidate.
+    candidate_ids: set[str] = set()
     for c in chapters:
-        if c.get("year", 0) >= current_year:
-            continue
-        audit = c.get("change_audit") or {}
-        cast_ids = c.get("cast_ids") or []
-        for cid in cast_ids:
-            if per_char_broken.get(cid):
-                continue
-            entry = audit.get(cid) or {}
+        for cid in (c.get("cast_ids") or []):
+            if isinstance(cid, str) and cid:
+                candidate_ids.add(cid)
+
+    streaks: list[str] = []
+    for cid in candidate_ids:
+        run = 0
+        for c in chapters:
+            cast_ids = c.get("cast_ids") or []
+            if cid not in cast_ids:
+                break  # absence resets the consecutive run
+            entry = (c.get("change_audit") or {}).get(cid) or {}
             if entry.get("verdict") == "unchanged":
-                per_char_streak[cid] = per_char_streak.get(cid, 0) + 1
-            else:
-                per_char_broken[cid] = True
-        # any cid present in audit but not in cast_ids (rare): treat as broken
-    return sorted([cid for cid, n in per_char_streak.items() if n >= streak_limit])
+                run += 1
+                continue
+            break  # `changed` (or missing verdict) also resets
+        if run >= streak_limit:
+            streaks.append(cid)
+    return sorted(streaks)
 
 
 def _append_chapter_index(
@@ -882,6 +951,17 @@ def _recent_fork_domains(index: dict, window: int = FORK_ANTI_LOCKIN_WINDOW
             if c.get("chosen_fork_domain")]
 
 
+def _recent_central_tensions(index: dict, window: int = 3) -> list[str]:
+    """v5: anti-repetition memory for the summariser."""
+    tensions: list[str] = []
+    for c in _recent_chapters(index, window):
+        yd = c.get("year_dilemma") or {}
+        wager = yd.get("wager") if isinstance(yd, dict) else None
+        if isinstance(wager, str) and wager.strip():
+            tensions.append(wager.strip())
+    return tensions
+
+
 def _previous_chapter_entry(index: dict, current_year: int) -> dict | None:
     """The chapter_index entry for the year just before current_year, if
     any. Used by the continuity pass to find hooks_to_plant that SHOULD
@@ -891,6 +971,281 @@ def _previous_chapter_entry(index: dict, current_year: int) -> dict | None:
         if c.get("year") == current_year - 1:
             return c
     return None
+
+
+# --------------------------------------------------------------------------- #
+# v5: setting ledger, debt ledger, rupture log
+# --------------------------------------------------------------------------- #
+
+def _setting_ledger_path(run_dir: Path) -> Path:
+    return run_dir / "setting_ledger.json"
+
+
+def _load_setting_ledger(run_dir: Path) -> dict:
+    path = _setting_ledger_path(run_dir)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {"entries": []}
+
+
+def _save_setting_ledger(run_dir: Path, ledger: dict) -> None:
+    _write_json(_setting_ledger_path(run_dir), ledger)
+
+
+def _debt_ledger_path(run_dir: Path) -> Path:
+    return run_dir / "debt_ledger.json"
+
+
+def _load_debt_ledger(run_dir: Path) -> dict:
+    path = _debt_ledger_path(run_dir)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {"debts": []}
+
+
+def _save_debt_ledger(run_dir: Path, ledger: dict) -> None:
+    _write_json(_debt_ledger_path(run_dir), ledger)
+
+
+def _rupture_log_path(run_dir: Path) -> Path:
+    return run_dir / "rupture_log.json"
+
+
+def _load_rupture_log(run_dir: Path) -> dict:
+    path = _rupture_log_path(run_dir)
+    if path.exists():
+        return json.loads(path.read_text(encoding="utf-8"))
+    return {"entries": []}
+
+
+def _save_rupture_log(run_dir: Path, log: dict) -> None:
+    _write_json(_rupture_log_path(run_dir), log)
+
+
+def _horizon_class(planted_year: int, ripens_by_year: int | None) -> str:
+    if not isinstance(ripens_by_year, int):
+        return "near"
+    delta = ripens_by_year - planted_year
+    if delta <= 1:
+        return "near"
+    if delta <= 4:
+        return "mid"
+    if delta <= 7:
+        return "long"
+    return "decade"
+
+
+def _open_debts(debt_ledger: dict) -> list[dict]:
+    return [
+        d for d in debt_ledger.get("debts", [])
+        if isinstance(d, dict)
+        and d.get("status", "open") in ("open", "advanced")
+    ]
+
+
+def _near_debt_fraction(debt_ledger: dict) -> float:
+    debts = _open_debts(debt_ledger)
+    if not debts:
+        return 0.0
+    near = sum(1 for d in debts if d.get("horizon_class") == "near")
+    return near / len(debts)
+
+
+def _act_for_year(decade_spine: dict | None, year: int) -> dict | None:
+    if not decade_spine:
+        return None
+    for act in decade_spine.get("acts") or []:
+        yr = act.get("year_range", "")
+        nums = [int(n) for n in re.findall(r"\b(20\d{2}|21\d{2})\b", str(yr))]
+        if len(nums) >= 2 and min(nums) <= year <= max(nums):
+            return act
+    return None
+
+
+def _promise_line_ids_for_current_act(decade_spine: dict | None, year: int) -> set[str]:
+    act = _act_for_year(decade_spine, year)
+    if not act:
+        return set()
+    return {
+        p.get("id") for p in (act.get("promise_lines") or [])
+        if isinstance(p, dict) and p.get("id")
+    }
+
+
+def _claimed_promise_ids(setting_ledger: dict) -> set[str]:
+    return {
+        e.get("act_promise_claimed") for e in setting_ledger.get("entries", [])
+        if isinstance(e, dict) and e.get("act_promise_claimed")
+        and e.get("act_promise_realised", True) is not False
+    }
+
+
+def _setting_cooldown_context(setting_ledger: dict, *, current_year: int) -> dict:
+    entries = [
+        e for e in setting_ledger.get("entries", [])
+        if isinstance(e, dict)
+        and isinstance(e.get("year"), int)
+        and e["year"] < current_year
+    ]
+    context: dict[str, list] = {}
+    for axis, window in SETTING_COOLDOWNS.items():
+        vals: list = []
+        low = current_year - window
+        for e in entries:
+            if e["year"] < low:
+                continue
+            value = e.get(axis)
+            if axis == "irreversible_event_types":
+                vals.extend(value or [])
+            elif value:
+                vals.append(value)
+        context[axis] = vals
+    context["recent_variance_overrides"] = [
+        e.get("year") for e in entries
+        if e.get("variance_override")
+        and e.get("year", 0) >= current_year - VARIANCE_OVERRIDE_WINDOW
+    ]
+    return context
+
+
+def _outline_setting_entry(outline: dict, beat_sheet: dict, year: int) -> dict:
+    irr_types = [
+        ev.get("type") for ev in beat_sheet.get("irreversible_events") or []
+        if isinstance(ev, dict) and ev.get("type")
+    ]
+    return {
+        "year": year,
+        "place_signature": outline.get("place_signature"),
+        "place_family": outline.get("place_family"),
+        "pov_gravity_well_id": outline.get("pov_gravity_well_id")
+        or beat_sheet.get("dilemma_pov_character_id"),
+        "time_scale": outline.get("time_scale") or outline.get("time_shape"),
+        "plot_shape": outline.get("plot_shape"),
+        "irreversible_event_types": irr_types,
+        "act_promise_claimed": outline.get("act_promise_claimed")
+        or beat_sheet.get("act_promise_claim"),
+        "variance_override": outline.get("variance_override"),
+    }
+
+
+def _upsert_setting_ledger(
+    run_dir: Path, *, year: int, outline: dict, beat_sheet: dict,
+    continuity_report: dict,
+) -> None:
+    ledger = _load_setting_ledger(run_dir)
+    entry = _outline_setting_entry(outline, beat_sheet, year)
+    realised = continuity_report.get("setting_ledger_realised") or {}
+    if isinstance(realised, dict):
+        for k in (
+            "place_signature", "place_family", "pov_gravity_well_id",
+            "time_scale", "plot_shape", "irreversible_event_types",
+        ):
+            if realised.get(k):
+                entry[k] = realised[k]
+    entry["act_promise_realised"] = continuity_report.get("act_promise_realised")
+    entry["setting_ledger_compliance"] = continuity_report.get("setting_ledger_compliance")
+    entries = [e for e in ledger.get("entries", []) if e.get("year") != year]
+    entries.append(entry)
+    ledger["entries"] = sorted(entries, key=lambda e: e.get("year", 0))
+    _save_setting_ledger(run_dir, ledger)
+
+
+def _upsert_debt_ledger(
+    run_dir: Path, *, year: int, beat_sheet: dict, continuity_report: dict,
+) -> None:
+    ledger = _load_debt_ledger(run_dir)
+    debts = [d for d in ledger.get("debts", []) if d.get("planted_year") != year]
+    by_id = {d.get("hook_id"): d for d in debts if d.get("hook_id")}
+
+    for h in beat_sheet.get("hooks_to_plant") or []:
+        if not isinstance(h, dict):
+            continue
+        hid = h.get("hook_id")
+        if not hid:
+            continue
+        ripens = h.get("ripens_by_year")
+        entry = {
+            "hook_id": hid,
+            "hook": h.get("hook", ""),
+            "planted_year": year,
+            "planted_in_chapter": f"year_{year}",
+            "ripens_by_year": ripens,
+            "horizon_class": h.get("horizon_class") or _horizon_class(year, ripens),
+            "stake": h.get("stake", ""),
+            "spine_act": h.get("spine_act"),
+            "spine_promise_claim": h.get("spine_promise_claim")
+            or beat_sheet.get("act_promise_claim"),
+            "status": "open",
+            "status_history": [{"year": year, "status": "open", "source": "beat_sheet"}],
+        }
+        by_id[hid] = entry
+
+    for change in continuity_report.get("debt_ledger_discharged") or []:
+        if not isinstance(change, dict):
+            continue
+        hid = change.get("hook_id")
+        if not hid or hid not in by_id:
+            continue
+        new_status = change.get("new_status") or change.get("status") or "advanced"
+        by_id[hid]["status"] = new_status
+        by_id[hid].setdefault("status_history", []).append({
+            "year": year,
+            "status": new_status,
+            "evidence": change.get("evidence", ""),
+        })
+
+    ledger["debts"] = sorted(by_id.values(), key=lambda d: (d.get("planted_year", 0), d.get("hook_id", "")))
+    _save_debt_ledger(run_dir, ledger)
+
+
+def _upsert_rupture_log(
+    run_dir: Path, *, year: int, rupture_doc: dict, continuity_report: dict | None = None,
+) -> None:
+    log = _load_rupture_log(run_dir)
+    rupture = rupture_doc.get("rupture") if isinstance(rupture_doc, dict) else None
+    entry = {
+        "year": year,
+        "quiet": rupture is None,
+        "rupture": rupture,
+        "rupture_type": rupture.get("type") if isinstance(rupture, dict) else None,
+    }
+    if continuity_report:
+        entry["realised"] = continuity_report.get("rupture_realised")
+    entries = [e for e in log.get("entries", []) if e.get("year") != year]
+    entries.append(entry)
+    log["entries"] = sorted(entries, key=lambda e: e.get("year", 0))
+    _save_rupture_log(run_dir, log)
+
+
+def _rupture_constraints(log: dict, current_year: int) -> dict:
+    entries = [
+        e for e in log.get("entries", [])
+        if isinstance(e, dict)
+        and isinstance(e.get("year"), int)
+        and e["year"] < current_year
+    ]
+    entries.sort(key=lambda e: e["year"], reverse=True)
+    quiet_streak = 0
+    ruptured_streak = 0
+    for e in entries:
+        if e.get("quiet"):
+            if ruptured_streak:
+                break
+            quiet_streak += 1
+            continue
+        else:
+            if quiet_streak:
+                break
+            ruptured_streak += 1
+            continue
+    recent_types = [e.get("rupture_type") for e in entries[:5] if e.get("rupture_type")]
+    return {
+        "quiet_streak": quiet_streak,
+        "ruptured_streak": ruptured_streak,
+        "force_rupture": quiet_streak >= RUPTURE_FORCED_AFTER_QUIET_YEARS,
+        "must_be_quiet": ruptured_streak >= RUPTURE_CONSECUTIVE_CAP,
+        "recent_types": recent_types,
+    }
 
 
 def _normalize_hooks(hooks: list) -> list[dict]:
@@ -1603,6 +1958,7 @@ async def run_summarizer(
     specialist_docs: dict[str, dict],
     state: dict,
     decade_spine: dict | None = None,
+    recent_tensions: list[str] | None = None,
     retries: int = 2,
 ) -> dict:
     spine_json = _pretty_json(decade_spine) if decade_spine else (
@@ -1618,6 +1974,10 @@ async def run_summarizer(
         culture_doc=_pretty_json(specialist_docs["culture"]),
         state_json=_pretty_json(state),
         valid_moods=", ".join(VALID_MOODS),
+        recent_tensions=(
+            "\n".join(f"- {t}" for t in (recent_tensions or []))
+            if recent_tensions else "(none yet)"
+        ),
     )
 
     last_err: str | None = None
@@ -1697,7 +2057,8 @@ async def run_decade_spine(
             f"\n\nPREVIOUS ATTEMPT REJECTED BECAUSE: {problem}\n"
             f"Fix it. Required fields: {list(DECADE_SPINE_REQUIRED_FIELDS)}. "
             f"`acts` must be a list of 3 entries, each carrying "
-            f"{list(DECADE_SPINE_ACT_FIELDS)}. `stakes_for_cast` needs at "
+            f"{list(DECADE_SPINE_ACT_FIELDS)} plus 3..6 `promise_lines`. "
+            f"`stakes_for_cast` needs at "
             f"least 2 of the 3 bootstrap character ids."
         )
     raise RuntimeError(
@@ -1726,6 +2087,20 @@ def _validate_decade_spine(data: dict) -> str | None:
                 continue
             if not isinstance(v, str) or not v.strip():
                 return f"acts[{i}].{k} must be a non-empty string"
+        promise_lines = a.get("promise_lines")
+        if not isinstance(promise_lines, list) or not (3 <= len(promise_lines) <= 6):
+            return f"acts[{i}].promise_lines must be a list of 3..6 stageable obligations"
+        seen_ids: set[str] = set()
+        for j, p in enumerate(promise_lines):
+            if not isinstance(p, dict):
+                return f"acts[{i}].promise_lines[{j}] must be an object"
+            for pk in ("id", "obligation"):
+                pv = p.get(pk)
+                if not isinstance(pv, str) or not pv.strip():
+                    return f"acts[{i}].promise_lines[{j}].{pk} must be a non-empty string"
+            if p["id"] in seen_ids:
+                return f"acts[{i}].promise_lines duplicate id '{p['id']}'"
+            seen_ids.add(p["id"])
     stakes = data.get("stakes_for_cast")
     if not isinstance(stakes, list) or len(stakes) < 2:
         return "stakes_for_cast must list at least 2 of the founding cast"
@@ -2177,6 +2552,9 @@ async def run_beat_sheet(
     previous_hooks_typed: list[dict] | None = None,
     recent_off_page_years: list[int] | None = None,
     decade_spine: dict | None = None,
+    debt_ledger: dict | None = None,
+    setting_ledger: dict | None = None,
+    chosen_fork: dict | None = None,
     main_cast_size: int = 0,
     retries: int = 2,
 ) -> dict:
@@ -2234,6 +2612,16 @@ async def run_beat_sheet(
             "read stronger than staging."
         )
 
+    open_debts = _open_debts(debt_ledger or {})
+    long_debts = [d for d in open_debts if d.get("horizon_class") in ("mid", "long", "decade")]
+    near_fraction = _near_debt_fraction(debt_ledger or {})
+    current_promises = _promise_line_ids_for_current_act(decade_spine, year)
+    claimed_promises = _claimed_promise_ids(setting_ledger or {})
+    unclaimed_promises = sorted(pid for pid in current_promises if pid not in claimed_promises)
+    recent_event_types = _setting_cooldown_context(
+        setting_ledger or {"entries": []}, current_year=year
+    ).get("irreversible_event_types", [])
+
     user = prompts.BEAT_SHEET_USER_TEMPLATE.format(
         year=year,
         decade_spine_json=_pretty_json(decade_spine) if decade_spine
@@ -2247,6 +2635,20 @@ async def run_beat_sheet(
         previous_hooks_typed=prev_hooks_block,
         off_page_guidance=off_page_guidance,
         main_cast_size=main_cast_size,
+        debt_ledger_json=_pretty_json({"open_debts": open_debts}),
+        long_debt_guidance=(
+            "No standing mid/long/decade debts yet; plant one now."
+            if not long_debts else _pretty_json(long_debts[:8])
+        ),
+        near_debt_fraction=f"{near_fraction:.2f}",
+        act_promise_options=(
+            ", ".join(unclaimed_promises or sorted(current_promises))
+            if current_promises else "(no promise_lines available)"
+        ),
+        recent_irreversible_event_types=(
+            ", ".join(sorted(set(recent_event_types))) if recent_event_types else "(none)"
+        ),
+        chosen_fork_json=_pretty_json(chosen_fork or {}),
     )
 
     data: dict | None = None
@@ -2264,6 +2666,11 @@ async def run_beat_sheet(
             data, dossiers, crossinterference,
             previous_hooks_typed=prev_hooks,
             main_cast_ids=main_cast_ids,
+            decade_spine=decade_spine,
+            setting_ledger=setting_ledger,
+            debt_ledger=debt_ledger,
+            current_year=year,
+            chosen_fork=chosen_fork,
         )
         if not problem:
             return data
@@ -2276,7 +2683,9 @@ async def run_beat_sheet(
             "AT LEAST ONE of type 'dramatic-seed'; irreversible_events "
             "has >=1 entry (type from: "
             f"{list(VALID_IRREVERSIBLE_TYPES)}); dilemma_pov_character_id "
-            "is a main_cast id; if main_cast_size >= 3 then "
+            "is a main_cast id; act_promise_claim names a current "
+            "promise_line id; hooks_to_plant includes >=1 long/decade "
+            "horizon hook; if main_cast_size >= 3 then "
             "collision_plan.required is true and "
             "collision_plan.description names a scene with >=2 mains "
             "exercising agency."
@@ -2291,11 +2700,16 @@ def _validate_beat_sheet(
     data: dict, dossiers: dict[str, dict], crossinterference: dict,
     *, previous_hooks_typed: list[dict] | None = None,
     main_cast_ids: list[str] | None = None,
+    decade_spine: dict | None = None,
+    setting_ledger: dict | None = None,
+    debt_ledger: dict | None = None,
+    current_year: int | None = None,
+    chosen_fork: dict | None = None,
 ) -> str | None:
     for k in ("central_tension", "hooks_to_resolve", "hooks_to_plant",
               "ordered_beats", "side_characters",
               "dilemma_pov_character_id", "irreversible_events",
-              "collision_plan"):
+              "collision_plan", "act_promise_claim"):
         if k not in data:
             return f"missing key '{k}'"
 
@@ -2308,6 +2722,18 @@ def _validate_beat_sheet(
     if dpov not in cast_ids:
         return (f"dilemma_pov_character_id '{dpov}' must be a main_cast "
                 f"id (one of {sorted(cast_ids)})")
+
+    if current_year is not None:
+        promise_ids = _promise_line_ids_for_current_act(decade_spine, current_year)
+        claim = data.get("act_promise_claim")
+        if promise_ids:
+            if not isinstance(claim, str) or claim not in promise_ids:
+                return (
+                    f"act_promise_claim '{claim}' must be one of the current "
+                    f"act promise_line ids {sorted(promise_ids)}"
+                )
+        elif not isinstance(claim, str) or not claim.strip():
+            return "act_promise_claim must be a non-empty string"
 
     # hooks_to_resolve + hooks_to_plant: v4 typed-objects shape. The
     # prompt shows the object shape; legacy string inputs from old
@@ -2330,13 +2756,31 @@ def _validate_beat_sheet(
         if not isinstance(h, dict):
             return (f"hooks_to_plant[{j}] must be an object "
                     f"(got {type(h).__name__})")
-        for k in ("hook_id", "hook", "type", "stake"):
+        for k in ("hook_id", "hook", "type", "horizon_class", "stake"):
             v = h.get(k)
             if not isinstance(v, str) or not v.strip():
                 return f"hooks_to_plant[{j}].{k} must be a non-empty string"
         if h["type"] not in VALID_HOOK_TYPES:
             return (f"hooks_to_plant[{j}].type '{h['type']}' must be one of "
                     f"{list(VALID_HOOK_TYPES)}")
+        horizon = h.get("horizon_class")
+        if horizon not in VALID_HORIZON_CLASSES:
+            return (f"hooks_to_plant[{j}].horizon_class '{horizon}' must be "
+                    f"one of {list(VALID_HORIZON_CLASSES)}")
+        ripens = h.get("ripens_by_year")
+        if not isinstance(ripens, int) or isinstance(ripens, bool):
+            return f"hooks_to_plant[{j}].ripens_by_year must be an integer"
+        if h.get("spine_act") is not None:
+            if h.get("spine_act") not in (1, 2, 3):
+                return f"hooks_to_plant[{j}].spine_act must be 1, 2, or 3"
+        spc = h.get("spine_promise_claim")
+        if spc is not None and (not isinstance(spc, str) or not spc.strip()):
+            return f"hooks_to_plant[{j}].spine_promise_claim must be a non-empty string"
+        if current_year is not None and horizon in LONG_HORIZON_CLASSES:
+            if not isinstance(ripens, int) or ripens - current_year < 5:
+                return (f"hooks_to_plant[{j}] claims long horizon but "
+                        f"ripens_by_year={ripens!r}; long debts must ripen "
+                        f">=5 years out")
     if len(plant) < CONTINUITY_MIN_HOOKS_PLANTED:
         return (f"hooks_to_plant has {len(plant)} entries; need >= "
                 f"{CONTINUITY_MIN_HOOKS_PLANTED}")
@@ -2345,6 +2789,16 @@ def _validate_beat_sheet(
         return (f"hooks_to_plant has {dramatic_seed_count} dramatic-seed "
                 f"hook(s); need >= {DRAMATIC_SEED_MIN_PER_YEAR} to give "
                 f"next year narrative propulsion")
+    if current_year is not None:
+        long_count = 0
+        for h in plant:
+            horizon = h.get("horizon_class") or _horizon_class(
+                current_year, h.get("ripens_by_year")
+            )
+            if horizon in LONG_HORIZON_CLASSES:
+                long_count += 1
+        if long_count < 1:
+            return "hooks_to_plant must include >=1 long or decade horizon debt"
 
     # Require >= required pickup of previous hooks, prioritising
     # dramatic-seed entries when available.
@@ -2382,6 +2836,16 @@ def _validate_beat_sheet(
                         f"`on_page_consequence`; an off-page event must still "
                         f"be ratified on-page by its visible aftermath")
         irr_ids.add(ev["event_id"])
+    if current_year is not None and setting_ledger is not None:
+        recent_types = set(_setting_cooldown_context(
+            setting_ledger, current_year=current_year
+        ).get("irreversible_event_types", []))
+        if recent_types and not any(ev.get("type") not in recent_types for ev in irr):
+            return (
+                "irreversible_events must include at least one type not used "
+                f"in the last {SETTING_COOLDOWNS['irreversible_event_types']} "
+                f"years (recent types: {sorted(recent_types)})"
+            )
 
     # ordered_beats
     beats = data["ordered_beats"]
@@ -2415,6 +2879,15 @@ def _validate_beat_sheet(
                         f"'{cev}' not in irreversible_events ids "
                         f"{sorted(irr_ids)}")
             irr_carried.add(cev)
+
+    fork_actor = (chosen_fork or {}).get("actor")
+    if fork_actor and isinstance(fork_actor, str) and dpov and fork_actor != dpov:
+        if not any(b.get("fork_staged_on_site") is True for b in beats):
+            return (
+                "chosen fork actor differs from dilemma_pov_character_id; at "
+                "least one ordered_beats entry must set fork_staged_on_site=true "
+                "and stage the fork's irreversible act where it happens"
+            )
 
     missing = cast_ids - appearing
     if missing:
@@ -2478,6 +2951,7 @@ async def run_chapter_outline(
     active_slop: list[dict],
     decade_spine: dict | None = None,
     recent_stagings: list[str] | None = None,
+    setting_ledger: dict | None = None,
     retries: int = 2,
 ) -> dict:
     recent_modes_str = (
@@ -2512,19 +2986,24 @@ async def run_chapter_outline(
         mood_low, mood_high = 0, 1_000_000
     hint_lines = []
     for mid, spec in CHAPTER_MODES.items():
-        lo = max(spec["words_low"], mood_low)
-        hi = min(spec["words_high"], mood_high)
+        lo = max(spec["chapter_word_low"], mood_low)
+        hi = min(spec["chapter_word_high"], mood_high)
         if lo <= hi:
             hint_lines.append(f"- {mid}: {lo}-{hi} words")
         else:
             hint_lines.append(
-                f"- {mid}: (no overlap between mode [{spec['words_low']}-"
-                f"{spec['words_high']}] and mood [{mood_low}-{mood_high}]; "
-                f"either pick a different mode or widen toward mode range)"
+                f"- {mid}: (no overlap between mode "
+                f"[{spec['chapter_word_low']}-"
+                f"{spec['chapter_word_high']}] and mood "
+                f"[{mood_low}-{mood_high}]; either pick a different mode or "
+                f"widen toward mode range)"
             )
     word_budget_hint = "\n  " + "\n  ".join(hint_lines)
 
     chapter_modes_block = _render_chapter_modes_card()
+    setting_context = _setting_cooldown_context(
+        setting_ledger or {"entries": []}, current_year=year
+    )
 
     user = prompts.CHAPTER_OUTLINE_USER_TEMPLATE.format(
         year=year,
@@ -2548,6 +3027,10 @@ async def run_chapter_outline(
         candidate_modulator_ids=", ".join(candidate_modulator_ids),
         candidate_device_ids=", ".join(candidate_device_ids),
         recent_stagings=stagings_block,
+        setting_ledger_json=_pretty_json(setting_ledger or {"entries": []}),
+        setting_cooldown_context_json=_pretty_json(setting_context),
+        valid_time_scales=", ".join(VALID_TIME_SCALES),
+        valid_plot_shapes=", ".join(VALID_PLOT_SHAPES),
         active_slop_list=slop_for_prompt,
     )
 
@@ -2570,6 +3053,8 @@ async def run_chapter_outline(
             candidate_base_ids=candidate_base_ids,
             candidate_modulator_ids=candidate_modulator_ids,
             candidate_device_ids=candidate_device_ids,
+            setting_ledger=setting_ledger,
+            current_year=year,
         )
         if not problem:
             return data
@@ -2590,6 +3075,9 @@ async def run_chapter_outline(
             f"each scene MUST include a `contract` object with ALL of "
             f"{list(SCENE_CONTRACT_FIELDS)} as non-empty strings; each "
             f"scene has `opening_image` (not `anchor`) and NO `line`. "
+            f"v5 fields place_signature, place_family, pov_gravity_well_id, "
+            f"time_scale and plot_shape are required and must respect cooldowns "
+            f"unless variance_override is present. "
             f"Every beat_id appears in some section; every scene_id "
             f"appears in some section."
         )
@@ -2605,10 +3093,10 @@ def _render_chapter_modes_card() -> str:
     lines: list[str] = []
     for mid, spec in CHAPTER_MODES.items():
         lines.append(
-            f"- {mid}: {spec['scenes_min']}-{spec['scenes_max']} scenes, "
-            f"words {spec['words_low']}-{spec['words_high']}, "
-            f"dialogue ratio floor {spec['dialogue_ratio_floor']:.2f} — "
-            f"{spec['note']}"
+            f"- {mid}: {spec['min_scenes']}-{spec['max_scenes']} scenes, "
+            f"words {spec['chapter_word_low']}-{spec['chapter_word_high']}, "
+            f"dialogue ratio floor {spec['dialogue_floor']:.2f} — "
+            f"{spec['description']}"
         )
     return "\n".join(lines)
 
@@ -2620,12 +3108,16 @@ def _validate_chapter_outline(
     candidate_base_ids: list[str],
     candidate_modulator_ids: list[str],
     candidate_device_ids: list[str],
+    setting_ledger: dict | None = None,
+    current_year: int | None = None,
 ) -> str | None:
     # v4 required keys: `mode` replaces `structure`; `opening_image` replaces
     # per-scene `anchor`; `line` is removed. voice_palette + readers_compass
     # + scene contract remain.
     required = (
         "readers_compass", "year_mood", "mode", "mode_rationale",
+        "place_signature", "place_family", "pov_gravity_well_id",
+        "time_scale", "plot_shape", "act_promise_claimed",
         "word_budget", "scene_budget", "section_plan", "opening_line_seed",
         "voice_palette",
     )
@@ -2653,6 +3145,49 @@ def _validate_chapter_outline(
                 f"{MOSAIC_CAP_WINDOW} years; pick another mode")
     mode_spec = CHAPTER_MODES[mode]
 
+    for k in ("place_signature", "place_family", "pov_gravity_well_id"):
+        v = data.get(k)
+        if not isinstance(v, str) or not v.strip():
+            return f"{k} must be a non-empty string"
+    time_scale = data.get("time_scale")
+    if time_scale not in VALID_TIME_SCALES:
+        return f"time_scale '{time_scale}' not in {list(VALID_TIME_SCALES)}"
+    plot_shape = data.get("plot_shape")
+    if plot_shape not in VALID_PLOT_SHAPES:
+        return f"plot_shape '{plot_shape}' not in {list(VALID_PLOT_SHAPES)}"
+    if data.get("act_promise_claimed") != beat_sheet.get("act_promise_claim"):
+        return (
+            "act_promise_claimed must echo beat_sheet.act_promise_claim "
+            f"({beat_sheet.get('act_promise_claim')!r})"
+        )
+    if current_year is not None and setting_ledger is not None:
+        context = _setting_cooldown_context(setting_ledger, current_year=current_year)
+        violations: list[str] = []
+        for axis in ("place_signature", "place_family", "pov_gravity_well_id",
+                     "time_scale", "plot_shape"):
+            if data.get(axis) in set(context.get(axis, [])):
+                violations.append(axis)
+        irr_types = [
+            ev.get("type") for ev in beat_sheet.get("irreversible_events") or []
+            if isinstance(ev, dict) and ev.get("type")
+        ]
+        recent_irr = set(context.get("irreversible_event_types") or [])
+        if recent_irr and irr_types and not any(t not in recent_irr for t in irr_types):
+            violations.append("irreversible_event_types")
+        override = data.get("variance_override")
+        if violations:
+            if not isinstance(override, dict) or not isinstance(override.get("justification"), str) or not override["justification"].strip():
+                return (
+                    f"setting cooldown violation on {violations}; provide "
+                    "variance_override.justification or pick fresher axes"
+                )
+            if context.get("recent_variance_overrides"):
+                return (
+                    "variance_override already used within the last "
+                    f"{VARIANCE_OVERRIDE_WINDOW} years "
+                    f"({context['recent_variance_overrides']}); pick fresher axes"
+                )
+
     # Mood: still enforced by summariser choice.
     mood = data["year_mood"]
     if mood not in VALID_MOODS:
@@ -2660,6 +3195,16 @@ def _validate_chapter_outline(
     if mood != required_mood:
         return (f"year_mood '{mood}' must echo the summariser's "
                 f"year_mood '{required_mood}' — you do not pick the mood")
+    # v4: each mode carries an `allowed_moods` set; reject the obvious
+    # mismatches (e.g. `mosaic` paired with the `acute` mood). This was
+    # data in the registry with no enforcement — so a model that picked
+    # mosaic under acute would slip through even though the mode is
+    # registered as fragment-dossier-energy.
+    allowed_moods = mode_spec.get("allowed_moods") or set()
+    if allowed_moods and mood not in allowed_moods:
+        return (f"mode '{mode}' does not support year_mood '{mood}' — "
+                f"allowed moods for this mode are "
+                f"{sorted(allowed_moods)}; pick a different mode")
     wb = data["word_budget"]
     if not isinstance(wb, dict) or "low" not in wb or "high" not in wb:
         return "word_budget must have 'low' and 'high' integer fields"
@@ -2669,18 +3214,19 @@ def _validate_chapter_outline(
         return f"word_budget.low/high must be ints, got {wb!r}"
     # Mode dictates word envelope. (Mood still constrains via MOOD_BUDGETS
     # on the legacy path but in v4 the mode is the authoritative shape.)
-    if not (mode_spec["words_low"] <= wlow <= whigh <= mode_spec["words_high"]):
+    cwl, cwh = mode_spec["chapter_word_low"], mode_spec["chapter_word_high"]
+    if not (cwl <= wlow <= whigh <= cwh):
         return (f"word_budget {{low:{wlow}, high:{whigh}}} must sit inside "
-                f"the '{mode}' mode range "
-                f"[{mode_spec['words_low']}, {mode_spec['words_high']}]")
+                f"the '{mode}' mode range [{cwl}, {cwh}]")
 
     # Scene budget + v4 scene contract.
     scenes = data["scene_budget"]
     if not isinstance(scenes, list):
         return "scene_budget must be a list"
-    if not (mode_spec["scenes_min"] <= len(scenes) <= mode_spec["scenes_max"]):
+    smin, smax = mode_spec["min_scenes"], mode_spec["max_scenes"]
+    if not (smin <= len(scenes) <= smax):
         return (f"scene_budget has {len(scenes)} scenes; mode '{mode}' "
-                f"requires {mode_spec['scenes_min']}..{mode_spec['scenes_max']}")
+                f"requires {smin}..{smax}")
     scene_ids: set[str] = set()
     empty_who_scenes = 0
     for i, s in enumerate(scenes):
@@ -2724,8 +3270,9 @@ def _validate_chapter_outline(
 
     # Section plan.
     sections = data["section_plan"]
-    if not isinstance(sections, list) or not (2 <= len(sections) <= 7):
-        return (f"section_plan must have 2..7 entries, got "
+    min_sections = 1 if mode in ("monoscene", "long-march") else 2
+    if not isinstance(sections, list) or not (min_sections <= len(sections) <= 7):
+        return (f"section_plan must have {min_sections}..7 entries, got "
                 f"{len(sections) if isinstance(sections, list) else type(sections).__name__}")
     valid_beat_ids = {b["beat_id"] for b in beat_sheet.get("ordered_beats", [])}
     referenced_beats: set[str] = set()
@@ -2797,7 +3344,85 @@ def _validate_chapter_outline(
 
 
 # --------------------------------------------------------------------------- #
-# Stage 6b: Narrator Execute (premium tier — Phase 2 + 3)
+# Stage 6e: Rupture Authorisation (v5 — cheap typed surprise slot)
+# --------------------------------------------------------------------------- #
+
+async def run_rupture_authorisation(
+    client: AsyncOpenAI,
+    *,
+    year: int,
+    chapter_outline: dict,
+    beat_sheet: dict,
+    debt_ledger: dict,
+    side_cast: dict,
+    rupture_log: dict,
+    retries: int = 2,
+) -> dict:
+    constraints = _rupture_constraints(rupture_log, year)
+    user = prompts.RUPTURE_AUTH_USER_TEMPLATE.format(
+        year=year,
+        chapter_outline_json=_pretty_json(chapter_outline),
+        beat_sheet_json=_pretty_json(beat_sheet),
+        debt_ledger_json=_pretty_json({"open_debts": _open_debts(debt_ledger)}),
+        side_cast_json=_pretty_json(side_cast),
+        rupture_log_json=_pretty_json(rupture_log),
+        rupture_constraints_json=_pretty_json(constraints),
+        valid_rupture_types=", ".join(VALID_RUPTURE_TYPES),
+    )
+    data: dict | None = None
+    problem: str | None = None
+    for attempt in range(retries + 1):
+        raw = await _chat(
+            client, "specialist",
+            [{"role": "system", "content": prompts.RUPTURE_AUTH_SYSTEM},
+             {"role": "user",   "content": user}],
+            json_mode=True,
+        )
+        data = _parse_json(raw, where="rupture_authorisation")
+        problem = _validate_rupture_authorisation(data, constraints=constraints)
+        if not problem:
+            return data
+        print(f"  [rupture attempt {attempt + 1}: {problem}; retrying]")
+        user += (
+            f"\n\nPREVIOUS ATTEMPT REJECTED BECAUSE: {problem}\n"
+            f"Fix it. `rupture` may be null unless constraints force one. "
+            f"If present, type must be one of {list(VALID_RUPTURE_TYPES)} "
+            f"and actor_id/reason/expected_effect/audit_signal are required."
+        )
+    raise RuntimeError(
+        f"rupture_authorisation failed after {retries + 1} attempts: {problem}\n"
+        f"{_pretty_json(data)}"
+    )
+
+
+def _validate_rupture_authorisation(data: dict, *, constraints: dict) -> str | None:
+    if not isinstance(data, dict):
+        return "rupture authorisation must be an object"
+    if "year" not in data:
+        return "missing year"
+    rupture = data.get("rupture")
+    if rupture is None:
+        if constraints.get("force_rupture"):
+            return "rupture is forced after quiet streak; rupture may not be null"
+        return None
+    if constraints.get("must_be_quiet"):
+        return "rupture_log has too many consecutive ruptured years; this year must be quiet"
+    if not isinstance(rupture, dict):
+        return "rupture must be an object or null"
+    rtype = rupture.get("type")
+    if rtype not in VALID_RUPTURE_TYPES:
+        return f"rupture.type '{rtype}' not in {list(VALID_RUPTURE_TYPES)}"
+    if constraints.get("recent_types") and rtype == constraints["recent_types"][0]:
+        return f"rupture.type '{rtype}' repeats last year's rupture type"
+    for k in ("actor_id", "reason", "expected_effect", "audit_signal"):
+        v = rupture.get(k)
+        if not isinstance(v, str) or not v.strip():
+            return f"rupture.{k} must be a non-empty string"
+    return None
+
+
+# --------------------------------------------------------------------------- #
+# Stage 6f: Narrator Execute (premium tier — Phase 2 + 3 + v5 rupture)
 #
 # Renders the outline to prose. No longer chooses shape — the outline
 # already did. Honours the chosen voice_palette (base + modulator +
@@ -2820,6 +3445,7 @@ async def run_storyteller(
     style_guide: str,
     active_slop: list[dict],
     decade_spine: dict | None = None,
+    rupture: dict | None = None,
 ) -> str:
     palette = chapter_outline.get("voice_palette") or {}
     palette_card = _palette_card(palette)
@@ -2838,6 +3464,7 @@ async def run_storyteller(
         dossiers_json=_pretty_json(list(dossiers.values())),
         beat_sheet_json=_pretty_json(beat_sheet),
         chapter_outline_json=_pretty_json(chapter_outline),
+        rupture_json=_pretty_json(rupture or {"rupture": None}),
         prev_chapter_text=prev_chapter_text or "(no previous chapter yet)",
         prev_year=prev_year if prev_year is not None else "n/a",
         palette_card=palette_card,
@@ -2912,6 +3539,7 @@ async def run_editor(
     fix_block: str = "",
     year_dilemma: dict | None = None,
     beat_sheet: dict | None = None,
+    rupture: dict | None = None,
 ) -> str:
     """Editor polish. Phase 4 adds an optional `fix_block` that's
     prepended to the user prompt on a continuity-retry so the editor
@@ -2928,6 +3556,7 @@ async def run_editor(
         beat_sheet_json=_pretty_json(beat_sheet) if beat_sheet
         else "(no beat sheet supplied)",
         year_dilemma_json=_pretty_json(year_dilemma or {}),
+        rupture_json=_pretty_json(rupture or {"rupture": None}),
         draft_prose=draft_prose,
         palette_card=palette_card,
         active_slop_list=slop_for_prompt,
@@ -2969,6 +3598,10 @@ async def run_continuity_pass(
     active_slop: list[dict],
     decade_spine: dict | None = None,
     year_dilemma: dict | None = None,
+    rupture: dict | None = None,
+    setting_ledger: dict | None = None,
+    debt_ledger: dict | None = None,
+    chosen_fork: dict | None = None,
 ) -> dict:
     palette = chapter_outline.get("voice_palette") or {}
     palette_card = _palette_card(palette)
@@ -2991,6 +3624,10 @@ async def run_continuity_pass(
         year_dilemma_json=_pretty_json(year_dilemma or {}),
         chapter_outline_json=_pretty_json(chapter_outline),
         beat_sheet_json=_pretty_json(beat_sheet),
+        rupture_json=_pretty_json(rupture or {"rupture": None}),
+        setting_ledger_json=_pretty_json(setting_ledger or {"entries": []}),
+        debt_ledger_json=_pretty_json(debt_ledger or {"debts": []}),
+        chosen_fork_json=_pretty_json(chosen_fork or {}),
         cast_plan_json=_pretty_json(cast_plan),
         dossiers_json=_pretty_json(list(dossiers.values())),
         previous_hooks_typed=prev_hooks_block,
@@ -3017,6 +3654,11 @@ async def run_continuity_pass(
         beat_sheet=beat_sheet,
         previous_hooks_typed=prev_hooks,
         chapter_outline=chapter_outline,
+        rupture=rupture,
+        setting_ledger=setting_ledger,
+        debt_ledger=debt_ledger,
+        current_year=year,
+        chosen_fork=chosen_fork,
     )
     data["code_audit_problems"] = audit_problems
     if audit_problems and data.get("verdict") == "pass":
@@ -3041,6 +3683,11 @@ def _audit_continuity_report(
     data: dict, *, cast_plan: dict, beat_sheet: dict,
     previous_hooks_typed: list[dict],
     chapter_outline: dict | None = None,
+    rupture: dict | None = None,
+    setting_ledger: dict | None = None,
+    debt_ledger: dict | None = None,
+    current_year: int | None = None,
+    chosen_fork: dict | None = None,
 ) -> list[str]:
     """Cheap deterministic cross-checks on top of the LLM's audit.
 
@@ -3250,6 +3897,24 @@ def _audit_continuity_report(
             f"honour its chosen mode '{mf.get('mode_claimed')}': "
             f"{note}"
         )
+    # v4: if the claimed mode carries a dialogue_floor > 0 (today that
+    # is only `overheard` at 0.60), enforce it deterministically when
+    # the auditor reports a dialogue_ratio. The prompt's rule 5 reads
+    # the same threshold; this catches the case where the auditor
+    # reports a compliant `mode_satisfied=true` but a ratio that falls
+    # below the floor the registry declares.
+    claimed_mode = mf.get("mode_claimed")
+    dialogue_ratio = mf.get("dialogue_ratio")
+    mode_spec = CHAPTER_MODES.get(claimed_mode) if isinstance(claimed_mode, str) else None
+    if mode_spec and isinstance(dialogue_ratio, (int, float)):
+        floor = mode_spec.get("dialogue_floor") or 0.0
+        if floor > 0 and dialogue_ratio < floor:
+            problems.append(
+                f"dialogue_ratio {dialogue_ratio:.2f} is below the "
+                f"'{claimed_mode}' mode's dialogue_floor {floor:.2f} — "
+                f"this mode is dialogue-forward; more of the chapter "
+                f"must live inside direct or reported speech"
+            )
 
     # 10. Collision audit: prompt emits collision={required,observed,evidence}.
     cp = beat_sheet.get("collision_plan") or {}
@@ -3279,6 +3944,53 @@ def _audit_continuity_report(
             f"— v4 requires each scene's turn, cost, and embodied gesture "
             f"to be on-page"
         )
+
+    # 12. v5 setting variance + fork staging + promise/debt/rupture checks.
+    if current_year is not None and chapter_outline is not None:
+        compliance = data.get("setting_ledger_compliance") or {}
+        if isinstance(compliance, dict):
+            bad_axes = [
+                axis for axis, ok in compliance.items()
+                if axis in SETTING_COOLDOWNS and ok is False
+            ]
+            override = chapter_outline.get("variance_override")
+            if bad_axes and not override:
+                problems.append(
+                    f"setting cooldown violation without variance_override: {bad_axes}"
+                )
+        if data.get("act_promise_realised") is False:
+            problems.append(
+                "act_promise_realised=false — the chapter claimed a spine "
+                "promise but did not dramatise it on-page"
+            )
+        long_planted = data.get("debt_ledger_long_planted")
+        if isinstance(long_planted, int) and long_planted < 1:
+            problems.append(
+                "debt_ledger_long_planted is below 1 — v5 requires one "
+                "long or decade debt per year"
+            )
+        if data.get("irreversible_event_diversity") is False:
+            problems.append(
+                "irreversible_event_diversity=false — no irreversible event "
+                "type was fresh against the last two years"
+            )
+    fork_actor = (chosen_fork or {}).get("actor")
+    pov_well = (chapter_outline or {}).get("pov_gravity_well_id") \
+        or beat_sheet.get("dilemma_pov_character_id")
+    if fork_actor and pov_well and fork_actor != pov_well:
+        if data.get("fork_staged_on_site") is not True:
+            problems.append(
+                "fork_staged_on_site=false — chosen fork actor differs from "
+                "chapter POV gravity well, so the fork's irreversible act "
+                "must be staged where it happens"
+            )
+    rdoc = rupture or {}
+    if isinstance(rdoc, dict) and rdoc.get("rupture") is not None:
+        if data.get("rupture_realised") is not True:
+            problems.append(
+                "rupture_realised=false — authorised rupture did not meet "
+                "its audit_signal and must be preserved/fixed"
+            )
 
     return problems
 
@@ -3340,6 +4052,10 @@ async def _run_continuity_with_retry(
     style_guide: str,
     decade_spine: dict | None = None,
     year_dilemma: dict | None = None,
+    rupture: dict | None = None,
+    setting_ledger: dict | None = None,
+    debt_ledger: dict | None = None,
+    chosen_fork: dict | None = None,
 ) -> tuple[str, dict, str, bool]:
     """Run the continuity pass; on fail, retry the editor once with a
     FIX: block and re-audit. Writes the report to disk after each pass
@@ -3361,6 +4077,10 @@ async def _run_continuity_with_retry(
         active_slop=active_slop,
         decade_spine=decade_spine,
         year_dilemma=year_dilemma,
+        rupture=rupture,
+        setting_ledger=setting_ledger,
+        debt_ledger=debt_ledger,
+        chosen_fork=chosen_fork,
     )
     # Persist first-pass report immediately so a crash during the
     # editor retry doesn't lose the audit evidence.
@@ -3390,6 +4110,7 @@ async def _run_continuity_with_retry(
         chapter_outline=chapter_outline, style_guide=style_guide,
         active_slop=active_slop, fix_block=fix_block,
         year_dilemma=year_dilemma, beat_sheet=beat_sheet,
+        rupture=rupture,
     )
     _write_text(year_dir / "07_story_final.md", final)
     slipped = _scan_and_refresh_slop(slop_ledger, final, year)
@@ -3413,6 +4134,10 @@ async def _run_continuity_with_retry(
         active_slop=active_slop,
         decade_spine=decade_spine,
         year_dilemma=year_dilemma,
+        rupture=rupture,
+        setting_ledger=setting_ledger,
+        debt_ledger=debt_ledger,
+        chosen_fork=chosen_fork,
     )
     verdict = report.get("verdict", "pass")
     degraded = False
@@ -3441,6 +4166,8 @@ async def run_fork_proposer(
     story: str,
     recent_fork_domains: list[str] | None = None,
     decade_spine: dict | None = None,
+    debt_ledger: dict | None = None,
+    setting_ledger: dict | None = None,
     retries: int = 2,
 ) -> list[dict]:
     """Fork proposer — v4. Forks must be typed EVENTS (not trends), with
@@ -3464,6 +4191,12 @@ async def run_fork_proposer(
         state_json=_pretty_json(state),
         story=story,
         recent_fork_domains=avoid_note,
+        debt_ledger_json=_pretty_json({"open_debts": _open_debts(debt_ledger or {})}),
+        recent_irreversible_event_types=", ".join(sorted(set(
+            _setting_cooldown_context(setting_ledger or {"entries": []}, current_year=year + 1)
+            .get("irreversible_event_types", [])
+        ))) or "(none)",
+        near_debt_fraction=f"{_near_debt_fraction(debt_ledger or {}):.2f}",
     )
 
     forks: list[dict] = []
@@ -3480,6 +4213,7 @@ async def run_fork_proposer(
         problem = _validate_forks(
             forks, recent_fork_domains=recent_domains,
             have_spine=decade_spine is not None,
+            debt_ledger=debt_ledger,
         )
         if not problem:
             return forks
@@ -3506,7 +4240,8 @@ async def run_fork_proposer(
 
 def _validate_forks(forks: list[dict], *,
                     recent_fork_domains: list[str] | None = None,
-                    have_spine: bool = False) -> str | None:
+                    have_spine: bool = False,
+                    debt_ledger: dict | None = None) -> str | None:
     if not isinstance(forks, list) or len(forks) != 3:
         return f"expected exactly 3 forks, got {len(forks) if isinstance(forks, list) else type(forks).__name__}"
     domains: list[str] = []
@@ -3554,6 +4289,10 @@ def _validate_forks(forks: list[dict], *,
                         f"string when a decade_spine exists — name how "
                         f"this fork moves the wager (which side ticks "
                         f"forward, or what price the wager would extract)")
+        role = f.get("debt_role")
+        if role is not None and role not in ("ripens-existing", "plants-new-horizon", "fresh-domain"):
+            return (f"fork[{i}].debt_role must be one of ripens-existing, "
+                    f"plants-new-horizon, fresh-domain (got {role!r})")
         # Cheap trend-filter: `irreversible_act` should be a single clause,
         # not a list of vague trends. Reject entries that read like trends
         # ("becomes more", "continues to", "increasingly").
@@ -3575,6 +4314,11 @@ def _validate_forks(forks: list[dict], *,
                     f"chosen-fork set {sorted(recent)}; at least one "
                     f"fork must use a domain NOT in that set "
                     f"(anti-lock-in rule)")
+    roles = {f.get("debt_role") for f in forks if f.get("debt_role")}
+    if _open_debts(debt_ledger or {}) and "ripens-existing" not in roles:
+        return "at least one fork must have debt_role='ripens-existing'"
+    if "plants-new-horizon" not in roles:
+        return "at least one fork must have debt_role='plants-new-horizon'"
     return None
 
 
@@ -3590,6 +4334,8 @@ def _validate_forks(forks: list[dict], *,
 # --------------------------------------------------------------------------- #
 
 def _stage_index(stage: str) -> int:
+    if stage == "06":
+        stage = "06f"  # legacy alias for pre-v5 narrator stage
     try:
         return STAGE_ORDER.index(stage)
     except ValueError as e:
@@ -3707,6 +4453,7 @@ def compute_readability(
     active_slop: list[dict],
     continuity_verdict: str | None,
     degraded: bool,
+    rupture: dict | None = None,
 ) -> dict:
     """Build the per-epoch readability record. Plan §8 shape — with a
     few extra bookkeeping fields (`year`, `continuity_verdict`,
@@ -3801,10 +4548,20 @@ def compute_readability(
         # work.
         "mode_used": chapter_outline.get("mode"),
         "structure_used": chapter_outline.get("structure"),
+        "time_shape_used": chapter_outline.get("time_scale") or chapter_outline.get("time_shape"),
+        "plot_shape_used": chapter_outline.get("plot_shape"),
+        "place_family": chapter_outline.get("place_family"),
         "palette": palette_out,
         "hooks_resolved": hooks_resolved,
         "hooks_planted": hooks_planted,
         "dramatic_seeds_planted": dramatic_seed_count,
+        "long_debts_planted": continuity_report.get("debt_ledger_long_planted"),
+        "debts_discharged": continuity_report.get("debt_ledger_discharged") or [],
+        "rupture_type": (
+            ((rupture or {}).get("rupture") or {}).get("type")
+            if isinstance(rupture, dict) else None
+        ),
+        "rupture_realised": continuity_report.get("rupture_realised"),
         "changed_mains": changed_mains,
         "irreversible_events_declared": len(beat_sheet.get("irreversible_events") or []),
         "irreversible_events_observed": irr_observed,
@@ -3857,6 +4614,10 @@ async def generate_epoch(
     # Runs seeded before v4 have no spine on disk, which is fine — every
     # consumer falls back to a neutral string when it's None.
     decade_spine = _load_decade_spine(run_dir)
+    chapter_index = _load_chapter_index(run_dir)
+    setting_ledger = _load_setting_ledger(run_dir)
+    debt_ledger = _load_debt_ledger(run_dir)
+    rupture_log = _load_rupture_log(run_dir)
 
     # 01 fork (not LLM-backed; replay loads from disk, fresh runs persist
     # the fork passed in).
@@ -3902,6 +4663,7 @@ async def generate_epoch(
         summary = await run_summarizer(
             client, year=year, specialist_docs=specialist_docs,
             state=new_state, decade_spine=decade_spine,
+            recent_tensions=_recent_central_tensions(chapter_index),
         )
         _write_json(year_dir / "04_summary.json", summary)
         print(f"  headline: {summary.get('headline_of_the_year', '(none)')}")
@@ -4009,6 +4771,9 @@ async def generate_epoch(
             previous_hooks_typed=previous_hooks_typed,
             recent_off_page_years=recent_off_page,
             decade_spine=decade_spine,
+            debt_ledger=debt_ledger,
+            setting_ledger=setting_ledger,
+            chosen_fork=chosen_fork,
             main_cast_size=main_cast_size,
         )
         _write_json(year_dir / "06c_beat_sheet.json", beat_sheet)
@@ -4036,7 +4801,7 @@ async def generate_epoch(
     # candidates honour mode-incompat + suppressive cap).
     if _should_run("06d", start_from):
         recent_modes = _recent_modes(chapter_index)
-        mosaic_saturated = _mosaic_cap_saturated(chapter_index, year)
+        mosaic_saturated = _mosaic_cap_saturated(chapter_index)
         palette_candidates = compute_palette_candidates(
             year_mood=summary.get("year_mood", "drift"),
             chapter_index=chapter_index,
@@ -4065,6 +4830,7 @@ async def generate_epoch(
             active_slop=active_slop,
             decade_spine=decade_spine,
             recent_stagings=stagings,
+            setting_ledger=setting_ledger,
         )
         _write_json(year_dir / "06d_chapter_outline.json", chapter_outline)
         compass = chapter_outline.get("readers_compass", {})
@@ -4087,9 +4853,34 @@ async def generate_epoch(
             year_dir / "06d_chapter_outline.json", context="chapter_outline"
         )
 
-    # 06 narrator execute (premium tier; renders outline to prose)
-    if _should_run("06", start_from):
-        _print_rule(f"Year {year} — narrator (executing outline to prose)")
+    # 06e rupture authorisation (v5; cheap tier; optional typed surprise).
+    if _should_run("06e", start_from):
+        _print_rule(f"Year {year} — rupture authorisation (v5 typed surprise slot)")
+        side_cast = _load_side_cast(run_dir)
+        rupture_doc = await run_rupture_authorisation(
+            client,
+            year=year,
+            chapter_outline=chapter_outline,
+            beat_sheet=beat_sheet,
+            debt_ledger=debt_ledger,
+            side_cast=side_cast,
+            rupture_log=rupture_log,
+        )
+        _write_json(year_dir / "06e_rupture.json", rupture_doc)
+        _upsert_rupture_log(run_dir, year=year, rupture_doc=rupture_doc)
+        rupture_log = _load_rupture_log(run_dir)
+        rupture = rupture_doc.get("rupture")
+        print(f"  rupture:      {rupture.get('type') if isinstance(rupture, dict) else 'quiet'}")
+    else:
+        rupture_path = year_dir / "06e_rupture.json"
+        if rupture_path.exists():
+            rupture_doc = _load_json_strict(rupture_path, context="rupture")
+        else:
+            rupture_doc = {"year": year, "rupture": None}
+
+    # 06f narrator execute (premium tier; renders outline + rupture to prose)
+    if _should_run("06f", start_from):
+        _print_rule(f"Year {year} — narrator (executing outline + rupture to prose)")
         draft = await run_storyteller(
             client,
             year=year,
@@ -4105,12 +4896,16 @@ async def generate_epoch(
             style_guide=style_guide,
             active_slop=active_slop,
             decade_spine=decade_spine,
+            rupture=rupture_doc,
         )
+        _write_text(year_dir / "06f_story_draft.md", draft)
+        # Legacy mirror so older tooling that opens 06_story_draft.md still works.
         _write_text(year_dir / "06_story_draft.md", draft)
     else:
-        draft = _load_text_strict(
-            year_dir / "06_story_draft.md", context="story_draft"
-        )
+        draft_path = year_dir / "06f_story_draft.md"
+        if not draft_path.exists():
+            draft_path = year_dir / "06_story_draft.md"
+        draft = _load_text_strict(draft_path, context="story_draft")
 
     # 07 editor polish — on replay from >07, load the saved final.
     if _should_run("07", start_from):
@@ -4121,6 +4916,7 @@ async def generate_epoch(
             active_slop=active_slop,
             year_dilemma=summary.get("year_dilemma"),
             beat_sheet=beat_sheet,
+            rupture=rupture_doc,
         )
         _write_text(year_dir / "07_story_final.md", final)
         # Re-arm cooldowns for any seeded slop phrase the editor let
@@ -4157,6 +4953,10 @@ async def generate_epoch(
             style_guide=style_guide,
             decade_spine=decade_spine,
             year_dilemma=summary.get("year_dilemma"),
+            rupture=rupture_doc,
+            setting_ledger=setting_ledger,
+            debt_ledger=debt_ledger,
+            chosen_fork=chosen_fork,
         )
     else:
         report = _load_json_strict(
@@ -4169,6 +4969,23 @@ async def generate_epoch(
     hooks_this_year = list(beat_sheet.get("hooks_to_plant") or [])
     cast_ids_this_year = [e["id"] for e in cast_plan.get("main_cast", [])]
     off_page_used = beat_sheet.get("off_page_event") is not None
+
+    if _stage_index(start_from) <= _stage_index("07b"):
+        _upsert_setting_ledger(
+            run_dir, year=year, outline=chapter_outline,
+            beat_sheet=beat_sheet, continuity_report=report,
+        )
+        _upsert_debt_ledger(
+            run_dir, year=year, beat_sheet=beat_sheet,
+            continuity_report=report,
+        )
+        _upsert_rupture_log(
+            run_dir, year=year, rupture_doc=rupture_doc,
+            continuity_report=report,
+        )
+        setting_ledger = _load_setting_ledger(run_dir)
+        debt_ledger = _load_debt_ledger(run_dir)
+        rupture_log = _load_rupture_log(run_dir)
 
     # v4: derive change_audit entries the chapter_index will persist so
     # next year's cast planner can compute unchanged streaks. The
@@ -4257,6 +5074,8 @@ async def generate_epoch(
             state=new_state, story=final,
             recent_fork_domains=recent_fork_domains,
             decade_spine=decade_spine,
+            debt_ledger=debt_ledger,
+            setting_ledger=setting_ledger,
         )
         _write_json(year_dir / "08_forks.json", {"forks": forks})
         for i, f in enumerate(forks, 1):
@@ -4298,6 +5117,7 @@ async def generate_epoch(
             active_slop=active_slop,
             continuity_verdict=continuity_verdict,
             degraded=degraded,
+            rupture=rupture_doc,
         )
         _write_json(year_dir / "09_readability.json", readability)
         palette_str = (
@@ -4372,7 +5192,7 @@ async def main() -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
     _write_json(run_dir / f"year_{seed_state['year']}_seed.json", seed_state)
 
-    _print_rule("Future Weavers v4 — scene depth + dramatic spine")
+    _print_rule("Future Weavers v5 — variance + long arcs + rupture")
     print(f"Run folder: {run_dir}")
     print(f"Seed year:  {seed_state['year']}")
 
@@ -4389,6 +5209,9 @@ async def main() -> None:
     # year is the origin. Idempotent — re-seeds only if the file is absent
     # or empty.
     _seed_slop_ledger(run_dir, seed_state["year"])
+    _save_setting_ledger(run_dir, _load_setting_ledger(run_dir))
+    _save_debt_ledger(run_dir, _load_debt_ledger(run_dir))
+    _save_rupture_log(run_dir, _load_rupture_log(run_dir))
 
     # Cast bootstrap — seed 3 founding characters from the seed state so year +1
     # has a cast plan to call on. Writes cast.json and the three per-character
